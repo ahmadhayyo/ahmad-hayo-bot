@@ -1,0 +1,342 @@
+"""
+app.py — Chainlit Web UI for the Ultimate Secure Local OS Executive Agent.
+Improvements over v1:
+  • Persistent session IDs saved to disk → agent resumes after server restart.
+  • "Continue" detection → typing أكمل / continue / استمر resumes last task.
+  • Streaming intermediate steps via cl.Step.
+  • File upload support.
+  • Human-in-the-Loop (HITL) with fixed cl.Action payload API.
+  • Async-first: compile_graph() is now async-compatible.
+"""
+from __future__ import annotations
+import asyncio
+import json
+import os
+import uuid
+import chainlit as cl
+from dotenv import load_dotenv
+from langchain_core.messages import AIMessageChunk, HumanMessage
+from langgraph.types import Command
+from agent.workflow import compile_graph
+
+load_dotenv()
+
+# ── Provider display ──────────────────────────────────────────────────────────
+_PROVIDER = os.getenv("MODEL_PROVIDER", "google").lower().strip()
+if _PROVIDER == "google":
+    _MODEL_DISPLAY = f"🟦 Google Gemini — `{os.getenv('GOOGLE_AGENT_MODEL', 'gemini-2.5-flash')}`"
+elif _PROVIDER == "anthropic":
+    _MODEL_DISPLAY = f"🟠 Anthropic Claude — `{os.getenv('ANTHROPIC_AGENT_MODEL', 'claude-3-7-sonnet-20250219')}`"
+else:
+    _MODEL_DISPLAY = f"❓ Unknown provider: `{_PROVIDER}`"
+
+# ── Session persistence file ──────────────────────────────────────────────────
+_SESSION_FILE = os.path.join(os.path.dirname(__file__), "last_session.json")
+
+# ── Continue keywords (Arabic + English) ─────────────────────────────────────
+_CONTINUE_KEYWORDS = {
+    "أكمل", "استمر", "اكمل", "كمّل", "كمل", "واصل",
+    "continue", "resume", "go on", "keep going", "proceed",
+    "أكمل من حيث توقفت", "استمر من حيث توقفت",
+}
+
+# ── Global graph variable (initialized at startup) ────────────────────────────
+GRAPH = None
+
+async def _init_graph():
+    """Initialize the graph asynchronously."""
+    global GRAPH
+    if GRAPH is None:
+        GRAPH = await compile_graph()
+    return GRAPH
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Session persistence helpers
+# ─────────────────────────────────────────────────────────────────────────────
+def _save_session(thread_id: str) -> None:
+    """Save the active thread_id to disk so it survives restarts."""
+    try:
+        with open(_SESSION_FILE, "w", encoding="utf-8") as f:
+            json.dump({"thread_id": thread_id}, f)
+    except Exception:
+        pass
+
+def _load_last_session() -> str | None:
+    """Return the last saved thread_id, or None if not found."""
+    try:
+        with open(_SESSION_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data.get("thread_id")
+    except Exception:
+        return None
+
+def _is_continue_request(text: str) -> bool:
+    """Return True if the user is asking to resume the previous task."""
+    t = text.strip().lower()
+    for kw in _CONTINUE_KEYWORDS:
+        if kw in t:
+            return True
+    return False
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Streaming helpers
+# ─────────────────────────────────────────────────────────────────────────────
+def _extract_text_chunk(chunk: AIMessageChunk) -> str:
+    content = chunk.content
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    return ""
+
+async def _run_graph(input_or_command, config: dict) -> None:
+    """Stream a single graph invocation and display steps in Chainlit."""
+    global GRAPH
+    if GRAPH is None:
+        GRAPH = await _init_graph()
+    
+    response_msg = cl.Message(content="")
+    await response_msg.send()
+    active_step: cl.Step | None = None
+    NODE_LABELS = {
+        "planner":  ("📋", "Planning..."),
+        "worker":   ("⚙️",  "Executing step..."),
+        "reviewer": ("🔍", "Reviewing progress..."),
+    }
+    try:
+        async for event in GRAPH.astream_events(
+            input_or_command, config=config, version="v2"
+        ):
+            kind: str = event.get("event", "")
+            name: str = event.get("name", "")
+            if kind == "on_chain_start" and name in NODE_LABELS:
+                if active_step:
+                    await active_step.__aexit__(None, None, None)
+                emoji, label = NODE_LABELS[name]
+                active_step = cl.Step(name=f"{emoji} {label}", type="run")
+                await active_step.__aenter__()
+            elif kind == "on_chain_end" and active_step:
+                await active_step.__aexit__(None, None, None)
+                active_step = None
+            elif kind == "on_tool_start":
+                tool_name  = name or "tool"
+                tool_input = str(event.get("data", {}).get("input", ""))
+                async with cl.Step(name=f"🔧 {tool_name}", type="tool") as ts:
+                    ts.input = tool_input[:500]
+            elif kind == "on_chat_model_stream":
+                chunk = event.get("data", {}).get("chunk")
+                if chunk:
+                    text = _extract_text_chunk(chunk)
+                    if text:
+                        await response_msg.stream_token(text)
+    except Exception as exc:
+        await cl.Message(
+            content=f"❌ **Runtime error**: {type(exc).__name__}: {exc}"
+        ).send()
+    finally:
+        if active_step:
+            await active_step.__aexit__(None, None, None)
+        await response_msg.update()
+
+async def _handle_hitl_loop(config: dict) -> None:
+    """Handle Human-in-the-Loop interrupts after each graph run."""
+    global GRAPH
+    if GRAPH is None:
+        GRAPH = await _init_graph()
+    
+    while True:
+        state = GRAPH.get_state(config)
+        if not state.next:
+            break
+        all_interrupts: list = []
+        for task in state.tasks:
+            if hasattr(task, "interrupts"):
+                all_interrupts.extend(task.interrupts)
+        if not all_interrupts:
+            break
+        interrupt_obj   = all_interrupts[0]
+        interrupt_data  = getattr(interrupt_obj, "value", {})
+        if isinstance(interrupt_data, dict):
+            interrupt_type    = interrupt_data.get("type", "generic")
+            interrupt_message = interrupt_data.get("message", str(interrupt_data))
+            risky_command     = interrupt_data.get("command", "")
+        else:
+            interrupt_type    = "generic"
+            interrupt_message = str(interrupt_data)
+            risky_command     = ""
+        # ── Case A: Destructive command ───────────────────────────────────────
+        if interrupt_type == "destructive_command":
+            res = await cl.AskActionMessage(
+                content=(
+                    "⚠️ **Human Approval Required**\n\n"
+                    f"The agent wants to execute a **potentially destructive** command:\n\n"
+                    f"```powershell\n{risky_command}\n```\n\n"
+                    "Do you authorise this operation?"
+                ),
+                actions=[
+                    cl.Action(name="approve", payload={"value": "approve"}, label="✅ Approve & Execute"),
+                    cl.Action(name="deny",    payload={"value": "deny"},    label="❌ Deny"),
+                ],
+                timeout=300,
+            ).send()
+            user_choice = (
+                res.get("payload", {}).get("value", res.get("value", "deny"))
+                if res else "deny"
+            )
+            status = "✅ Approved." if user_choice == "approve" else "❌ Denied."
+            await cl.Message(content=f"{status} Resuming agent…").send()
+            await _run_graph(Command(resume=user_choice), config)
+        # ── Case B: CAPTCHA ───────────────────────────────────────────────────
+        elif interrupt_type == "captcha":
+            res = await cl.AskActionMessage(
+                content=(
+                    "🔒 **CAPTCHA Detected**\n\n"
+                    f"{interrupt_message}\n\n"
+                    "Please solve the CAPTCHA in the browser window, then click **Done**."
+                ),
+                actions=[
+                    cl.Action(name="done", payload={"value": "done"}, label="✅ Done — Resume"),
+                    cl.Action(name="skip", payload={"value": "skip"}, label="⏭️ Skip"),
+                ],
+                timeout=600,
+            ).send()
+            user_choice = (
+                res.get("payload", {}).get("value", res.get("value", "done"))
+                if res else "done"
+            )
+            await cl.Message(content="▶️ Resuming after CAPTCHA…").send()
+            await _run_graph(Command(resume=user_choice), config)
+        # ── Case C: Generic ───────────────────────────────────────────────────
+        else:
+            res = await cl.AskUserMessage(
+                content=f"⏸️ **Agent Paused**\n\n{interrupt_message}\n\nType your response:",
+                timeout=300,
+            ).send()
+            user_response = res.get("output", "continue") if res else "continue"
+            await _run_graph(Command(resume=user_response), config)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Chainlit hooks
+# ─────────────────────────────────────────────────────────────────────────────
+@cl.on_chat_start
+async def on_chat_start() -> None:
+    """Generate or restore a session thread_id."""
+    global GRAPH
+    if GRAPH is None:
+        GRAPH = await _init_graph()
+    
+    last_thread = _load_last_session()
+    if last_thread:
+        # Check if the previous thread has unfinished work
+        try:
+            state = GRAPH.get_state({"configurable": {"thread_id": last_thread}})
+            has_work = bool(state and state.values.get("messages"))
+        except Exception:
+            has_work = False
+    else:
+        has_work = False
+    if has_work and last_thread:
+        thread_id = last_thread
+        resume_note = (
+            "\n\n> 🔁 **Previous session restored.** "
+            "Type **أكمل** or **continue** to resume your last task.\n"
+        )
+    else:
+        thread_id  = str(uuid.uuid4())
+        resume_note = ""
+    cl.user_session.set("thread_id", thread_id)
+    _save_session(thread_id)
+    await cl.Message(
+        content=(
+            "🤖 **Ultimate Secure Local OS Executive Agent** — Online\n\n"
+            f"**Model**: {_MODEL_DISPLAY}\n"
+            f"**Session**: `{thread_id[:8]}…`{resume_note}\n\n"
+            "---\n\n"
+            "**Capabilities:**\n"
+            "🖥️ PowerShell & OS control • 🌐 Web search & download • "
+            "🔎 Browser automation • 📁 File management • "
+            "🗂️ Git operations • 📄 File reading & analysis\n\n"
+            "**Just tell me what you want — I'll handle everything.**"
+        )
+    ).send()
+
+@cl.on_message
+async def on_message(message: cl.Message) -> None:
+    global GRAPH
+    if GRAPH is None:
+        GRAPH = await _init_graph()
+    
+    thread_id: str = cl.user_session.get("thread_id")
+    config: dict   = {"configurable": {"thread_id": thread_id}}
+    _save_session(thread_id)   # keep refreshed on disk
+    user_text = message.content.strip()
+    # ── Continue / Resume detection ───────────────────────────────────────────
+    if _is_continue_request(user_text):
+        try:
+            state = GRAPH.get_state(config)
+            if state and state.next:
+                # Graph is paused mid-task — resume it directly
+                await cl.Message(
+                    content="▶️ Resuming from where I stopped…"
+                ).send()
+                await _run_graph(Command(resume="continue"), config)
+                await _handle_hitl_loop(config)
+                return
+            elif state and state.values.get("plan") and state.values.get("iteration_count", 0) > 0:
+                # Graph finished a cycle but user wants to continue
+                await cl.Message(
+                    content="🔁 Continuing the previous task…"
+                ).send()
+                # Re-inject a continue message into the existing thread
+                inputs = {"messages": [HumanMessage(content="Continue working on the task. Pick up from the last completed step and keep going until fully done.")]}
+                await _run_graph(inputs, config)
+                await _handle_hitl_loop(config)
+                return
+        except Exception:
+            pass   # Fall through to normal processing
+    # ── File upload processing ────────────────────────────────────────────────
+    file_context = ""
+    if message.elements:
+        for element in message.elements:
+            path = getattr(element, "path", None)
+            name = getattr(element, "name", "unknown_file")
+            if path:
+                try:
+                    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                        raw = fh.read(80_000)
+                    file_context += f"\n\n---\n📄 **Uploaded file: {name}**\n```\n{raw}\n```"
+                except Exception as exc:
+                    file_context += f"\n\n❌ Could not read '{name}': {exc}"
+    full_text = user_text + file_context
+    # ── Initial graph run ─────────────────────────────────────────────────────
+    inputs = {"messages": [HumanMessage(content=full_text)]}
+    await _run_graph(inputs, config)
+    await _handle_hitl_loop(config)
+    # ── Post-run error summary ────────────────────────────────────────────────
+    # Only show errors if the last reviewer message contains FAILED:
+    # (never show old task errors after a new task completes successfully)
+    try:
+        final_state = GRAPH.get_state(config)
+        errors      = final_state.values.get("error_logs", [])
+        # Check if the task ended with FAILED verdict
+        messages = final_state.values.get("messages", [])
+        last_verdict = ""
+        for msg in reversed(messages):
+            content = getattr(msg, "content", "")
+            if isinstance(content, str) and ("FAILED:" in content or "TASK_COMPLETE:" in content):
+                last_verdict = content[:20]
+                break
+        # Only show error log if task explicitly FAILED
+        if errors and "FAILED:" in last_verdict:
+            await cl.Message(
+                content=(
+                    f"📋 **Session error log** — {len(errors)} issue(s) recorded:\n"
+                    + "\n".join(f"  • {e[:200]}" for e in errors[-5:])
+                )
+            ).send()
+    except Exception:
+        pass

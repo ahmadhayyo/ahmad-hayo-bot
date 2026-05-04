@@ -1,0 +1,47 @@
+# ============================================================
+# Ultimate Secure Local OS Executive Agent — Dependencies
+# ============================================================
+
+# Core LLM & Agent Framework
+langchain-anthropic>=0.3.0
+langchain-google-genai>=2.0.0   # Google Gemini support
+langchain-core>=0.3.0
+langgraph>=0.2.60
+
+# Web UI
+chainlit>=1.3.0
+
+# Browser Automation
+playwright>=1.45.0
+playwright-stealth>=1.0.6
+beautifulsoup4>=4.12.3
+
+# OS & File Utilities
+python-dotenv>=1.0.1
+gitpython>=3.1.43
+requests>=2.32.3
+
+# Async support
+aiofiles>=23.2.1
+
+# Web Search & Download
+duckduckgo-search>=6.0.0
+yt-dlp>=2024.1.0          # Download from YouTube, SoundCloud, and 1000+ sites
+
+# Desktop GUI Automation (open apps, click, type, screenshot)
+pyautogui>=0.9.54
+pygetwindow>=0.0.9
+Pillow>=10.0.0
+
+# Persistent Memory (SQLite checkpointing)
+langgraph-checkpoint-sqlite>=2.0.0
+aiosqlite>=0.20.0          # Required for AsyncSqliteSaver (async Chainlit streaming)
+
+# Process & system info (used by app_tools)
+psutil>=6.0.0
+
+# Pretty CLI logging
+rich>=13.7.0
+
+# Pydantic (LangChain peer dep — pin minimum)
+pydantic>=2.7.0
