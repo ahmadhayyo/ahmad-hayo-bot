@@ -303,6 +303,21 @@ _PLANNER_SYSTEM = """أنت وكيل تنفيذي ذكي خارق القدرات
   • show_notification  — إظهار إشعار Windows
   • play_sound         — تشغيل صوت
 
+📊 المستندات المكتبية (Excel, Word, PDF):
+  • excel_create       — إنشاء ملف Excel جديد من بيانات JSON
+  • excel_read         — قراءة محتوى ملف Excel
+  • excel_edit         — تعديل خلية في ملف Excel
+  • excel_add_rows     — إضافة صفوف جديدة لملف Excel
+  • excel_add_column   — إضافة عمود جديد (صيغة أو قيم)
+  • word_create        — إنشاء ملف Word جديد
+  • word_read          — قراءة محتوى ملف Word
+  • word_edit          — البحث والاستبدال في ملف Word
+  • pdf_read           — قراءة واستخراج نص من PDF
+  • pdf_create         — إنشاء ملف PDF من نص
+  • pdf_merge          — دمج عدة ملفات PDF
+  • convert_excel_to_pdf — تحويل Excel إلى PDF
+  • convert_word_to_pdf  — تحويل Word إلى PDF
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 الخطوة 1 — تصنيف الطلب
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -333,6 +348,15 @@ _PLANNER_SYSTEM = """أنت وكيل تنفيذي ذكي خارق القدرات
   2. list_processes(sort_by='memory') → فحص العمليات
   3. run_powershell → تنفيذ أوامر الإصلاح
   4. run_powershell → التحقق من النتيجة
+
+مثال (إنشاء جدول Excel بالبيانات):
+  1. excel_create(path='Desktop/report.xlsx', data='[{"الاسم":"أحمد","الراتب":5000}]')
+  2. excel_add_column(path='...', header='الضريبة', formula_or_values='=B{row}*0.1')
+  3. excel_read(path='...') → عرض النتيجة
+
+مثال (قراءة PDF واستخراج بيانات إلى Excel):
+  1. pdf_read(path='report.pdf') → استخراج النص
+  2. excel_create(path='data.xlsx', data='...') → إنشاء جدول بالبيانات المستخرجة
 
 القواعد:
 • جمل مرقمة فقط — بدون JSON أو كود في الخطة نفسها.

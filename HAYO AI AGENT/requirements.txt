@@ -47,5 +47,11 @@ pywin32>=306; sys_platform == "win32"
 # Pretty CLI logging
 rich>=13.7.0
 
+# Office Documents (Excel, Word, PDF)
+openpyxl>=3.1.2
+python-docx>=1.1.0
+pypdf>=4.0.0
+reportlab>=4.1.0
+
 # Pydantic (LangChain peer dep)
 pydantic>=2.7.0

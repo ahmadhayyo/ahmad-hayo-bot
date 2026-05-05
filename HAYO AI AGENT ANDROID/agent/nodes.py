@@ -217,6 +217,21 @@ _PLANNER_SYSTEM = """أنت وكيل تنفيذي ذكي خارق القدرات
   • fetch_url          — جلب محتوى صفحة ويب
   • download_url       — تحميل ملف من رابط
 
+📊 المستندات المكتبية (Excel, Word, PDF):
+  • excel_create       — إنشاء ملف Excel جديد من بيانات JSON
+  • excel_read         — قراءة محتوى ملف Excel
+  • excel_edit         — تعديل خلية في ملف Excel
+  • excel_add_rows     — إضافة صفوف جديدة لملف Excel
+  • excel_add_column   — إضافة عمود جديد (صيغة أو قيم)
+  • word_create        — إنشاء ملف Word جديد
+  • word_read          — قراءة محتوى ملف Word
+  • word_edit          — البحث والاستبدال في ملف Word
+  • pdf_read           — قراءة واستخراج نص من PDF
+  • pdf_create         — إنشاء ملف PDF من نص
+  • pdf_merge          — دمج عدة ملفات PDF
+  • convert_excel_to_pdf — تحويل Excel إلى PDF
+  • convert_word_to_pdf  — تحويل Word إلى PDF
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 الخطوة 1 — تصنيف الطلب
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
