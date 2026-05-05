@@ -1,16 +1,32 @@
-# 🤖 HAYO AI AGENT
+# 🤖 HAYO AI Agent — وكيل ذكي خارق القدرات
 
-وكيل ذكاء اصطناعي محلي خارق القدرات — يعمل على جهازك بصلاحيات كاملة.
+وكيل ذكاء اصطناعي محلي يعمل على جهازك بصلاحيات كاملة — ينفذ كل شيء تطلبه منه بدقة.
 
-## ما الذي يستطيع فعله
+## القدرات
 
-- **🌐 المتصفح**: يفتح Chrome، يتصفح المواقع، يسجل دخول، يملأ النماذج، يحمل الملفات
-- **🖥️ سطح المكتب**: يفتح أي تطبيق (Word, Photoshop, VSCode...)، يلتقط لقطات شاشة، ينقر، يكتب، يستخدم اختصارات لوحة المفاتيح
-- **📁 الملفات**: قراءة، كتابة، نسخ، نقل، بحث، تحميل من الإنترنت إلى سطح المكتب
-- **💻 PowerShell**: تنفيذ أي أمر Windows مع حماية مدمجة من الأوامر المدمرة
-- **🎵 الموسيقى**: تحميل من YouTube مباشرة بصيغة MP3 عبر `ytsearch:`
-- **🔍 Git**: عمليات على المستودعات المحلية
-- **🔎 بحث الويب**: عبر DuckDuckGo بدون مفتاح API
+| القدرة | التفاصيل |
+|--------|----------|
+| 🖥️ **النظام** | تنفيذ أوامر PowerShell و CMD، إدارة العمليات والخدمات، المهام المجدولة |
+| 📁 **الملفات** | قراءة، كتابة، نسخ، نقل، بحث، تحميل، إنشاء مجلدات |
+| 🌐 **المتصفح** | Chrome: تصفح، بحث، تحميل ملفات، ملء نماذج، لقطات شاشة |
+| 🖱️ **سطح المكتب** | فتح أي تطبيق، لقطات شاشة، تحكم بالماوس والكيبورد |
+| 📋 **الحافظة** | نسخ، لصق، إلحاق النصوص |
+| 🌍 **الشبكة** | فحص الاتصال، DNS، Wi-Fi، منافذ TCP |
+| 🔊 **الصوت** | تحكم بالمستوى، قراءة نص بصوت عالٍ، إشعارات |
+| 🔧 **الإصلاح** | إصلاح مشاكل النظام، التسجيل، الخدمات |
+| 🎵 **التحميل** | YouTube/أي موقع → MP3/MP4 عبر yt-dlp |
+| 🔍 **Git** | عمليات على المستودعات المحلية |
+
+## النماذج المدعومة
+
+| النموذج | المزود | الموقع |
+|---------|--------|--------|
+| 🟦 **Gemini** | Google | [aistudio.google.com](https://aistudio.google.com/app/apikey) |
+| 🟠 **Claude** | Anthropic | [console.anthropic.com](https://console.anthropic.com/) |
+| 🟢 **ChatGPT** | OpenAI | [platform.openai.com](https://platform.openai.com/api-keys) |
+| 🔵 **DeepSeek** | DeepSeek | [platform.deepseek.com](https://platform.deepseek.com/api_keys) |
+
+يمكنك تغيير النموذج من الواجهة مباشرة بكتابة `/model google` أو `/model anthropic` أو `/model openai` أو `/model deepseek`.
 
 ## المعمارية
 
@@ -27,97 +43,122 @@
 - **LangGraph** كبنية أساسية للحالة والتوجيه
 - **SQLite Checkpointer** لحفظ المحادثات بين تشغيلات الخادم
 - **Human-in-the-Loop** للأوامر المدمرة و CAPTCHA — يتوقف الوكيل ويسأل
-- **متعدد المزودين** — Anthropic Claude أو Google Gemini عبر متغير `.env`
+- **4 مزودين** — Google Gemini, Claude, ChatGPT, DeepSeek
 
-## التثبيت السريع (لمرة واحدة)
+## التثبيت السريع
 
+### الطريقة 1: بضغطة زر (الأسهل)
+1. ضع المجلد `HAYO AI AGENT` في القرص `C:\`
+2. عدّل ملف `.env` وأضف مفاتيح API الخاصة بك
+3. انقر مرتين على **`START.bat`** — سيفعل كل شيء تلقائياً!
+
+### الطريقة 2: يدوياً
 ```powershell
 cd "C:\HAYO AI AGENT"
 
-# 1) تفعيل البيئة
+# 1) إنشاء البيئة الافتراضية
+python -m venv venv
 .\venv\Scripts\activate
 
 # 2) تثبيت التبعيات
 pip install -r requirements.txt
 
-# 3) تثبيت متصفح Playwright (مرة واحدة)
-playwright install chromium
+# 3) تثبيت متصفح Playwright
+python -m playwright install chromium --with-deps
 
 # 4) إعداد المفاتيح
 copy .env.example .env
 notepad .env
-# عدّل GOOGLE_API_KEY أو ANTHROPIC_API_KEY
+# أضف مفاتيح API الخاصة بك
+
+# 5) تشغيل الوكيل
+chainlit run app.py --port 8000
 ```
 
-## التشغيل
+## التشغيل والإيقاف
 
-### الواجهة الرسومية (الأسهل)
-انقر مرتين على `START.bat` — سيفتح المتصفح تلقائياً على `http://localhost:8000`.
+| الإجراء | كيف |
+|---------|-----|
+| 🟢 **تشغيل** | انقر مرتين على `START.bat` |
+| 🔴 **إيقاف** | انقر مرتين على `STOP.bat` أو اضغط `Ctrl+C` |
 
-### سطر الأوامر
-```powershell
-python main.py
-# أو نفّذ طلبًا واحدًا واخرج:
-python main.py --once "افتح Chrome وحمّل ملف PDF من https://example.com/file.pdf إلى سطح المكتب"
-```
+الواجهة تفتح تلقائياً على `http://localhost:8000`
 
 ## أمثلة طلبات
 
 | الطلب | ما سيفعله الوكيل |
-|---|---|
-| "افتح Word واكتب فيه رسالة شكر" | open_app('word') → desktop_control type |
-| "حمّل أغنية عمرو دياب نور العين على سطح المكتب" | download_file('ytsearch:Amr Diab Nour El Ain') |
-| "ابحث في GitHub عن مشاريع LangGraph وافتح أعلى نتيجة" | browser_open + browser_click |
-| "سجّل دخول إلى جيميل وأرسل بريد إلى x@y.com" | browser_automation (يحفظ الجلسة) |
-| "اعرض المساحة المتبقية في القرص C" | execute_powershell |
+|-------|-------------------|
+| "افتح Word واكتب فيه رسالة شكر" | open_app → keyboard_type → keyboard_hotkey('ctrl,s') |
+| "حمّل أغنية عمرو دياب على سطح المكتب" | download_file('ytsearch:Amr Diab') |
+| "ابحث في Google عن مشاريع Python وافتح أعلى نتيجة" | browser_open → browser_click |
+| "اعرض معلومات النظام والذاكرة" | get_system_info → list_processes |
+| "أصلح مشكلة الشبكة في جهازي" | get_network_info → ping_host → run_powershell |
+| "اقرأ ملف report.docx من سطح المكتب" | read_file(path='C:\\Users\\...\\Desktop\\report.docx') |
+| "أنسخ هذا النص إلى الحافظة" | clipboard_set(text='...') |
+| "خفض صوت الجهاز إلى 30%" | volume_control(action='set', level=30) |
+
+## الأوامر الخاصة
+
+| الأمر | الوظيفة |
+|-------|---------|
+| `/model google` | تغيير النموذج إلى Google Gemini |
+| `/model anthropic` | تغيير النموذج إلى Anthropic Claude |
+| `/model openai` | تغيير النموذج إلى OpenAI ChatGPT |
+| `/model deepseek` | تغيير النموذج إلى DeepSeek |
+| `/screenshot` أو `لقطة شاشة` | أخذ لقطة شاشة لسطح المكتب |
+| `أكمل` أو `continue` | استئناف المهمة السابقة |
 
 ## الأمان
 
-الوكيل لا يستطيع تنفيذ هذه الأوامر بدون موافقتك الصريحة:
+الوكيل **يتوقف ويسألك** قبل تنفيذ هذه الأوامر:
 - `Remove-Item -Recurse`, `rm -rf`, `format`
 - `shutdown`, `Restart-Computer`
 - `Set-ExecutionPolicy`, `reg delete`
 - `Add-LocalGroupMember`, `New-LocalUser`
 
-عند اكتشاف نمط مدمر، الوكيل **يتوقف** ويعرض زر موافقة/رفض في الواجهة.
+عند اكتشاف أمر خطير، يظهر زر **موافق/رفض** في الواجهة.
 
 ## هيكل المشروع
 
 ```
 HAYO AI AGENT/
-├── app.py                 # واجهة Chainlit (الافتراضية)
-├── main.py                # واجهة CLI بديلة
-├── START.bat              # تشغيل بنقرة واحدة
-├── .env                   # مفاتيح API (لا ترفعه)
+├── app.py                  # واجهة Chainlit الرسومية
+├── main.py                 # واجهة CLI بديلة
+├── config.py               # إعدادات مركزية
+├── START.bat               # تشغيل بنقرة واحدة
+├── STOP.bat                # إيقاف بنقرة واحدة
+├── .env                    # مفاتيح API (لا ترفعه)
+├── .env.example            # قالب الإعدادات
 ├── requirements.txt
 │
 ├── agent/
-│   ├── workflow.py        # تجميع LangGraph (compile_graph)
-│   ├── nodes.py           # PlannerNode + WorkerNode + ReviewerNode
-│   └── graph.py           # shim للتوافق
+│   ├── workflow.py          # تجميع LangGraph
+│   ├── nodes.py             # PlannerNode + WorkerNode + ReviewerNode
+│   └── graph.py             # shim للتوافق
 │
 ├── core/
-│   └── state.py           # AgentState TypedDict
+│   ├── state.py             # AgentState TypedDict
+│   └── safety.py            # فحص الأوامر المدمرة
 │
 └── tools/
-    ├── os_core.py         # PowerShell + ملفات + manage_files
-    ├── web_and_cloud.py   # Playwright browser + Git
-    ├── web_tools.py       # web_search + download_file (yt-dlp)
-    └── desktop_control.py # pyautogui + pygetwindow + لقطات شاشة
+    ├── registry.py          # سجل موحد لجميع الأدوات
+    ├── system_tools.py      # PowerShell, CMD, ملفات, بيئة
+    ├── browser_tools.py     # Playwright: تصفح, نقر, ملء, لقطات
+    ├── desktop_tools.py     # pyautogui: تطبيقات, ماوس, كيبورد
+    ├── clipboard_tools.py   # حافظة Windows
+    ├── process_tools.py     # عمليات, خدمات, مهام مجدولة
+    ├── network_tools.py     # شبكة, DNS, Wi-Fi, منافذ
+    ├── audio_tools.py       # صوت, إشعارات, قراءة نص
+    ├── web_tools.py         # بحث ويب + تحميل (yt-dlp)
+    └── desktop_control.py   # توافق مع الإصدار السابق
 ```
 
 ## استكشاف الأخطاء
 
 | مشكلة | الحل |
-|---|---|
-| `MODEL_PROVIDER='google' but GOOGLE_API_KEY is empty` | عدّل `.env` وضع المفتاح من https://aistudio.google.com/app/apikey |
-| `playwright not installed` | `playwright install chromium` |
-| `ModuleNotFoundError: pyautogui` | `pip install -r requirements.txt` |
-| الوكيل يدور بلا توقف | المشروع به حد `MAX_ITERATIONS=20` يُجبره على التوقف. ارفعه في `.env` إن احتجت. |
-| المتصفح يفتح بدون كوكيز | أول مرة يفتح profile جديد. سجّل دخول ستحفظه `.browser_profile/` تلقائياً. |
-
-## ترقيات مقترحة لاحقاً
-
-- إضافة وحدة `tools/code_tools.py` لإدارة Python venv وتشغيل scripts
-- استبدال DuckDuckGo بـ Tavily/Brave API للبحث الأقوى
-- ربط ذاكرة طويلة الأمد (Mem0 / pgvector) لتذكر تفضيلاتك بين الجلسات
+|-------|------|
+| `GOOGLE_API_KEY is empty` | عدّل `.env` وضع المفتاح |
+| `playwright not installed` | `python -m playwright install chromium` |
+| `ModuleNotFoundError` | `pip install -r requirements.txt` |
+| الوكيل يدور بلا توقف | المشروع به حد `MAX_ITERATIONS=50` يُجبره على التوقف |
+| المتصفح يفتح بدون كوكيز | أول مرة يفتح profile جديد. سجّل دخول ستحفظه `.browser_profile/` تلقائياً |

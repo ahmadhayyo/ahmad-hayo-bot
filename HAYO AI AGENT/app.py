@@ -1,12 +1,15 @@
 """
-app.py — Chainlit Web UI for the Ultimate Secure Local OS Executive Agent.
-Improvements over v1:
+app.py — Chainlit Web UI for the HAYO AI Agent.
+
+Features:
+  • Model selector: switch between Google Gemini, Claude, ChatGPT, DeepSeek
   • Persistent session IDs saved to disk → agent resumes after server restart.
   • "Continue" detection → typing أكمل / continue / استمر resumes last task.
   • Streaming intermediate steps via cl.Step.
-  • File upload support.
+  • File upload support (all formats and sizes).
   • Human-in-the-Loop (HITL) with fixed cl.Action payload API.
-  • Async-first: compile_graph() is now async-compatible.
+  • Chat memory with thinking/execution/progress display.
+  • Screenshot integration for desktop capture.
 """
 from __future__ import annotations
 import asyncio
@@ -21,14 +24,43 @@ from agent.workflow import compile_graph
 
 load_dotenv()
 
-# ── Provider display ──────────────────────────────────────────────────────────
+# ── Provider configuration ────────────────────────────────────────────────────
 _PROVIDER = os.getenv("MODEL_PROVIDER", "google").lower().strip()
-if _PROVIDER == "google":
-    _MODEL_DISPLAY = f"🟦 Google Gemini — `{os.getenv('GOOGLE_AGENT_MODEL', 'gemini-2.5-flash')}`"
-elif _PROVIDER == "anthropic":
-    _MODEL_DISPLAY = f"🟠 Anthropic Claude — `{os.getenv('ANTHROPIC_AGENT_MODEL', 'claude-3-7-sonnet-20250219')}`"
-else:
-    _MODEL_DISPLAY = f"❓ Unknown provider: `{_PROVIDER}`"
+
+_PROVIDERS = {
+    "google": {
+        "label": "Google Gemini",
+        "icon": "🟦",
+        "model_var": "GOOGLE_AGENT_MODEL",
+        "default_model": "gemini-2.5-flash",
+    },
+    "anthropic": {
+        "label": "Anthropic Claude",
+        "icon": "🟠",
+        "model_var": "ANTHROPIC_AGENT_MODEL",
+        "default_model": "claude-sonnet-4-20250514",
+    },
+    "openai": {
+        "label": "OpenAI ChatGPT",
+        "icon": "🟢",
+        "model_var": "OPENAI_AGENT_MODEL",
+        "default_model": "gpt-4o",
+    },
+    "deepseek": {
+        "label": "DeepSeek",
+        "icon": "🔵",
+        "model_var": "DEEPSEEK_AGENT_MODEL",
+        "default_model": "deepseek-chat",
+    },
+}
+
+
+def _get_model_display(provider: str | None = None) -> str:
+    prov = provider or _PROVIDER
+    info = _PROVIDERS.get(prov, {})
+    model_name = os.getenv(info.get("model_var", ""), info.get("default_model", "unknown"))
+    return f"{info.get('icon', '❓')} {info.get('label', prov)} — `{model_name}`"
+
 
 # ── Session persistence file ──────────────────────────────────────────────────
 _SESSION_FILE = os.path.join(os.path.dirname(__file__), "last_session.json")
@@ -43,6 +75,7 @@ _CONTINUE_KEYWORDS = {
 # ── Global graph variable (initialized at startup) ────────────────────────────
 GRAPH = None
 
+
 async def _init_graph():
     """Initialize the graph asynchronously."""
     global GRAPH
@@ -50,25 +83,30 @@ async def _init_graph():
         GRAPH = await compile_graph()
     return GRAPH
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Session persistence helpers
 # ─────────────────────────────────────────────────────────────────────────────
-def _save_session(thread_id: str) -> None:
-    """Save the active thread_id to disk so it survives restarts."""
+def _save_session(thread_id: str, provider: str | None = None) -> None:
+    """Save the active thread_id and provider to disk so it survives restarts."""
     try:
+        data = {"thread_id": thread_id}
+        if provider:
+            data["provider"] = provider
         with open(_SESSION_FILE, "w", encoding="utf-8") as f:
-            json.dump({"thread_id": thread_id}, f)
+            json.dump(data, f)
     except Exception:
         pass
 
-def _load_last_session() -> str | None:
-    """Return the last saved thread_id, or None if not found."""
+
+def _load_last_session() -> dict:
+    """Return the last saved session data, or empty dict."""
     try:
         with open(_SESSION_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            return data.get("thread_id")
+            return json.load(f)
     except Exception:
-        return None
+        return {}
+
 
 def _is_continue_request(text: str) -> bool:
     """Return True if the user is asking to resume the previous task."""
@@ -77,6 +115,7 @@ def _is_continue_request(text: str) -> bool:
         if kw in t:
             return True
     return False
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Streaming helpers
@@ -93,61 +132,70 @@ def _extract_text_chunk(chunk: AIMessageChunk) -> str:
         )
     return ""
 
+
 async def _run_graph(input_or_command, config: dict) -> None:
     """Stream a single graph invocation and display steps in Chainlit."""
     global GRAPH
     if GRAPH is None:
         GRAPH = await _init_graph()
-    
+
     response_msg = cl.Message(content="")
     await response_msg.send()
     active_step: cl.Step | None = None
+
     NODE_LABELS = {
-        "planner":  ("📋", "Planning..."),
-        "worker":   ("⚙️",  "Executing step..."),
-        "reviewer": ("🔍", "Reviewing progress..."),
+        "planner":  ("🧠", "يفكر... | Thinking..."),
+        "worker":   ("⚡", "ينفذ... | Executing..."),
+        "reviewer": ("🔍", "يراجع... | Reviewing..."),
     }
+
     try:
         async for event in GRAPH.astream_events(
             input_or_command, config=config, version="v2"
         ):
             kind: str = event.get("event", "")
             name: str = event.get("name", "")
+
             if kind == "on_chain_start" and name in NODE_LABELS:
                 if active_step:
                     await active_step.__aexit__(None, None, None)
                 emoji, label = NODE_LABELS[name]
                 active_step = cl.Step(name=f"{emoji} {label}", type="run")
                 await active_step.__aenter__()
+
             elif kind == "on_chain_end" and active_step:
                 await active_step.__aexit__(None, None, None)
                 active_step = None
+
             elif kind == "on_tool_start":
-                tool_name  = name or "tool"
+                tool_name = name or "tool"
                 tool_input = str(event.get("data", {}).get("input", ""))
                 async with cl.Step(name=f"🔧 {tool_name}", type="tool") as ts:
                     ts.input = tool_input[:500]
+
             elif kind == "on_chat_model_stream":
                 chunk = event.get("data", {}).get("chunk")
                 if chunk:
                     text = _extract_text_chunk(chunk)
                     if text:
                         await response_msg.stream_token(text)
+
     except Exception as exc:
         await cl.Message(
-            content=f"❌ **Runtime error**: {type(exc).__name__}: {exc}"
+            content=f"❌ **خطأ في التنفيذ**: {type(exc).__name__}: {exc}"
         ).send()
     finally:
         if active_step:
             await active_step.__aexit__(None, None, None)
         await response_msg.update()
 
+
 async def _handle_hitl_loop(config: dict) -> None:
     """Handle Human-in-the-Loop interrupts after each graph run."""
     global GRAPH
     if GRAPH is None:
         GRAPH = await _init_graph()
-    
+
     while True:
         state = GRAPH.get_state(config)
         if not state.next:
@@ -158,80 +206,90 @@ async def _handle_hitl_loop(config: dict) -> None:
                 all_interrupts.extend(task.interrupts)
         if not all_interrupts:
             break
-        interrupt_obj   = all_interrupts[0]
-        interrupt_data  = getattr(interrupt_obj, "value", {})
+
+        interrupt_obj = all_interrupts[0]
+        interrupt_data = getattr(interrupt_obj, "value", {})
+
         if isinstance(interrupt_data, dict):
-            interrupt_type    = interrupt_data.get("type", "generic")
+            interrupt_type = interrupt_data.get("type", "generic")
             interrupt_message = interrupt_data.get("message", str(interrupt_data))
-            risky_command     = interrupt_data.get("command", "")
+            risky_command = interrupt_data.get("command", "")
         else:
-            interrupt_type    = "generic"
+            interrupt_type = "generic"
             interrupt_message = str(interrupt_data)
-            risky_command     = ""
+            risky_command = ""
+
         # ── Case A: Destructive command ───────────────────────────────────────
         if interrupt_type == "destructive_command":
             res = await cl.AskActionMessage(
                 content=(
-                    "⚠️ **Human Approval Required**\n\n"
-                    f"The agent wants to execute a **potentially destructive** command:\n\n"
+                    "⚠️ **مطلوب موافقة المستخدم**\n\n"
+                    f"الوكيل يريد تنفيذ أمر **قد يكون خطيراً**:\n\n"
                     f"```powershell\n{risky_command}\n```\n\n"
-                    "Do you authorise this operation?"
+                    "هل تسمح بتنفيذ هذا الأمر؟"
                 ),
                 actions=[
-                    cl.Action(name="approve", payload={"value": "approve"}, label="✅ Approve & Execute"),
-                    cl.Action(name="deny",    payload={"value": "deny"},    label="❌ Deny"),
+                    cl.Action(name="approve", payload={"value": "approve"}, label="✅ موافق"),
+                    cl.Action(name="deny", payload={"value": "deny"}, label="❌ رفض"),
                 ],
                 timeout=300,
             ).send()
+
             user_choice = (
                 res.get("payload", {}).get("value", res.get("value", "deny"))
                 if res else "deny"
             )
-            status = "✅ Approved." if user_choice == "approve" else "❌ Denied."
-            await cl.Message(content=f"{status} Resuming agent…").send()
+            status = "✅ تم الموافقة." if user_choice == "approve" else "❌ تم الرفض."
+            await cl.Message(content=f"{status} جارٍ الاستئناف…").send()
             await _run_graph(Command(resume=user_choice), config)
+
         # ── Case B: CAPTCHA ───────────────────────────────────────────────────
         elif interrupt_type == "captcha":
             res = await cl.AskActionMessage(
                 content=(
-                    "🔒 **CAPTCHA Detected**\n\n"
+                    "🔒 **تم اكتشاف CAPTCHA**\n\n"
                     f"{interrupt_message}\n\n"
-                    "Please solve the CAPTCHA in the browser window, then click **Done**."
+                    "يرجى حل الـ CAPTCHA في نافذة المتصفح، ثم اضغط **تم**."
                 ),
                 actions=[
-                    cl.Action(name="done", payload={"value": "done"}, label="✅ Done — Resume"),
-                    cl.Action(name="skip", payload={"value": "skip"}, label="⏭️ Skip"),
+                    cl.Action(name="done", payload={"value": "done"}, label="✅ تم"),
+                    cl.Action(name="skip", payload={"value": "skip"}, label="⏭️ تخطي"),
                 ],
                 timeout=600,
             ).send()
+
             user_choice = (
                 res.get("payload", {}).get("value", res.get("value", "done"))
                 if res else "done"
             )
-            await cl.Message(content="▶️ Resuming after CAPTCHA…").send()
+            await cl.Message(content="▶️ جارٍ الاستئناف بعد حل الـ CAPTCHA…").send()
             await _run_graph(Command(resume=user_choice), config)
+
         # ── Case C: Generic ───────────────────────────────────────────────────
         else:
             res = await cl.AskUserMessage(
-                content=f"⏸️ **Agent Paused**\n\n{interrupt_message}\n\nType your response:",
+                content=f"⏸️ **الوكيل متوقف مؤقتاً**\n\n{interrupt_message}\n\nاكتب ردك:",
                 timeout=300,
             ).send()
             user_response = res.get("output", "continue") if res else "continue"
             await _run_graph(Command(resume=user_response), config)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Chainlit hooks
 # ─────────────────────────────────────────────────────────────────────────────
 @cl.on_chat_start
 async def on_chat_start() -> None:
-    """Generate or restore a session thread_id."""
+    """Generate or restore a session thread_id and set up model selector."""
     global GRAPH
     if GRAPH is None:
         GRAPH = await _init_graph()
-    
-    last_thread = _load_last_session()
+
+    last_session = _load_last_session()
+    last_thread = last_session.get("thread_id")
+    saved_provider = last_session.get("provider", _PROVIDER)
+
     if last_thread:
-        # Check if the previous thread has unfinished work
         try:
             state = GRAPH.get_state({"configurable": {"thread_id": last_thread}})
             has_work = bool(state and state.values.get("messages"))
@@ -239,102 +297,221 @@ async def on_chat_start() -> None:
             has_work = False
     else:
         has_work = False
+
     if has_work and last_thread:
         thread_id = last_thread
         resume_note = (
-            "\n\n> 🔁 **Previous session restored.** "
-            "Type **أكمل** or **continue** to resume your last task.\n"
+            "\n\n> 🔁 **تم استعادة الجلسة السابقة.** "
+            "اكتب **أكمل** أو **continue** لاستئناف مهمتك الأخيرة.\n"
         )
     else:
-        thread_id  = str(uuid.uuid4())
+        thread_id = str(uuid.uuid4())
         resume_note = ""
+
     cl.user_session.set("thread_id", thread_id)
-    _save_session(thread_id)
+    cl.user_session.set("current_provider", saved_provider)
+    _save_session(thread_id, saved_provider)
+
+    # Build available models list for display
+    available_models = []
+    for key, info in _PROVIDERS.items():
+        api_key_var = {
+            "google": "GOOGLE_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "deepseek": "DEEPSEEK_API_KEY",
+        }.get(key, "")
+        has_key = bool(os.getenv(api_key_var, "").strip())
+        status = "✅" if has_key else "❌ (مفتاح API غير موجود)"
+        available_models.append(f"  {info['icon']} **{info['label']}** — {status}")
+
+    models_display = "\n".join(available_models)
+
     await cl.Message(
         content=(
-            "🤖 **Ultimate Secure Local OS Executive Agent** — Online\n\n"
-            f"**Model**: {_MODEL_DISPLAY}\n"
-            f"**Session**: `{thread_id[:8]}…`{resume_note}\n\n"
+            "# 🤖 HAYO AI Agent — وكيل ذكي خارق القدرات\n\n"
+            f"**النموذج الحالي**: {_get_model_display(saved_provider)}\n"
+            f"**الجلسة**: `{thread_id[:8]}…`{resume_note}\n\n"
             "---\n\n"
-            "**Capabilities:**\n"
-            "🖥️ PowerShell & OS control • 🌐 Web search & download • "
-            "🔎 Browser automation • 📁 File management • "
-            "🗂️ Git operations • 📄 File reading & analysis\n\n"
-            "**Just tell me what you want — I'll handle everything.**"
+            "### القدرات المتاحة:\n"
+            "🖥️ **النظام** — PowerShell, CMD, إدارة العمليات والخدمات\n"
+            "📁 **الملفات** — قراءة، كتابة، نسخ، نقل، بحث، تحميل\n"
+            "🌐 **المتصفح** — Chrome: تصفح، بحث، تحميل ملفات، ملء نماذج\n"
+            "🖱️ **سطح المكتب** — فتح تطبيقات، لقطات شاشة، تحكم بالماوس والكيبورد\n"
+            "📋 **الحافظة** — نسخ، لصق، إلحاق\n"
+            "🌍 **الشبكة** — فحص الاتصال، DNS، Wi-Fi\n"
+            "🔊 **الصوت** — تحكم بالمستوى، قراءة نص بصوت عالٍ\n"
+            "🔧 **الإصلاح** — إصلاح مشاكل النظام، التسجيل، الخدمات\n\n"
+            "---\n\n"
+            "### النماذج المتاحة:\n"
+            f"{models_display}\n\n"
+            "💡 **لتغيير النموذج**: اكتب `/model google` أو `/model anthropic` أو `/model openai` أو `/model deepseek`\n\n"
+            "---\n\n"
+            "**أخبرني بما تريد — سأنفذ كل شيء بدقة.**"
         )
     ).send()
+
 
 @cl.on_message
 async def on_message(message: cl.Message) -> None:
     global GRAPH
     if GRAPH is None:
         GRAPH = await _init_graph()
-    
+
     thread_id: str = cl.user_session.get("thread_id")
-    config: dict   = {"configurable": {"thread_id": thread_id}}
-    _save_session(thread_id)   # keep refreshed on disk
+    config: dict = {"configurable": {"thread_id": thread_id}}
+    _save_session(thread_id)
+
     user_text = message.content.strip()
+
+    # ── Model switch command ──────────────────────────────────────────────────
+    if user_text.lower().startswith("/model"):
+        parts = user_text.split(maxsplit=1)
+        if len(parts) == 2:
+            new_provider = parts[1].strip().lower()
+            if new_provider in _PROVIDERS:
+                # Check if API key is available
+                key_vars = {
+                    "google": "GOOGLE_API_KEY",
+                    "anthropic": "ANTHROPIC_API_KEY",
+                    "openai": "OPENAI_API_KEY",
+                    "deepseek": "DEEPSEEK_API_KEY",
+                }
+                api_key = os.getenv(key_vars.get(new_provider, ""), "").strip()
+                if not api_key:
+                    await cl.Message(
+                        content=(
+                            f"❌ **مفتاح API غير موجود لـ {_PROVIDERS[new_provider]['label']}**\n\n"
+                            f"يرجى إضافة `{key_vars[new_provider]}` في ملف `.env` ثم أعد تشغيل الوكيل."
+                        )
+                    ).send()
+                    return
+
+                # Switch the provider
+                from agent.nodes import switch_provider
+                try:
+                    switch_provider(new_provider)
+                    cl.user_session.set("current_provider", new_provider)
+                    _save_session(thread_id, new_provider)
+
+                    # Start a new session for the new model
+                    new_thread_id = str(uuid.uuid4())
+                    cl.user_session.set("thread_id", new_thread_id)
+                    _save_session(new_thread_id, new_provider)
+
+                    await cl.Message(
+                        content=(
+                            f"✅ **تم تغيير النموذج بنجاح!**\n\n"
+                            f"النموذج الحالي: {_get_model_display(new_provider)}\n"
+                            f"جلسة جديدة: `{new_thread_id[:8]}…`\n\n"
+                            "أخبرني بما تريد تنفيذه."
+                        )
+                    ).send()
+                except Exception as exc:
+                    await cl.Message(
+                        content=f"❌ **خطأ في تغيير النموذج**: {exc}"
+                    ).send()
+            else:
+                available = ", ".join(f"`{k}`" for k in _PROVIDERS.keys())
+                await cl.Message(
+                    content=f"❌ نموذج غير معروف: `{new_provider}`\n\nالنماذج المتاحة: {available}"
+                ).send()
+        else:
+            current = cl.user_session.get("current_provider", _PROVIDER)
+            await cl.Message(
+                content=(
+                    f"النموذج الحالي: {_get_model_display(current)}\n\n"
+                    "للتغيير: `/model google` | `/model anthropic` | `/model openai` | `/model deepseek`"
+                )
+            ).send()
+        return
+
+    # ── Screenshot command ────────────────────────────────────────────────────
+    if user_text.lower() in ("/screenshot", "/لقطة", "لقطة شاشة", "screenshot"):
+        await cl.Message(content="📸 جارٍ أخذ لقطة شاشة…").send()
+        inputs = {
+            "messages": [
+                HumanMessage(content="Take a screenshot of the desktop using screen_screenshot() and show me the result.")
+            ]
+        }
+        await _run_graph(inputs, config)
+        await _handle_hitl_loop(config)
+        return
+
     # ── Continue / Resume detection ───────────────────────────────────────────
     if _is_continue_request(user_text):
         try:
             state = GRAPH.get_state(config)
             if state and state.next:
-                # Graph is paused mid-task — resume it directly
-                await cl.Message(
-                    content="▶️ Resuming from where I stopped…"
-                ).send()
+                await cl.Message(content="▶️ جارٍ الاستئناف من حيث توقفت…").send()
                 await _run_graph(Command(resume="continue"), config)
                 await _handle_hitl_loop(config)
                 return
             elif state and state.values.get("plan") and state.values.get("iteration_count", 0) > 0:
-                # Graph finished a cycle but user wants to continue
-                await cl.Message(
-                    content="🔁 Continuing the previous task…"
-                ).send()
-                # Re-inject a continue message into the existing thread
-                inputs = {"messages": [HumanMessage(content="Continue working on the task. Pick up from the last completed step and keep going until fully done.")]}
+                await cl.Message(content="🔁 جارٍ متابعة المهمة السابقة…").send()
+                inputs = {
+                    "messages": [
+                        HumanMessage(
+                            content="Continue working on the task. Pick up from the last completed step and keep going until fully done."
+                        )
+                    ]
+                }
                 await _run_graph(inputs, config)
                 await _handle_hitl_loop(config)
                 return
         except Exception:
-            pass   # Fall through to normal processing
+            pass
+
+    # ── New task: reset state for clean execution ─────────────────────────────
+    # When user sends a new task, start a fresh thread to avoid conflicts
+    new_thread_id = str(uuid.uuid4())
+    cl.user_session.set("thread_id", new_thread_id)
+    config = {"configurable": {"thread_id": new_thread_id}}
+    _save_session(new_thread_id, cl.user_session.get("current_provider", _PROVIDER))
+
     # ── File upload processing ────────────────────────────────────────────────
     file_context = ""
     if message.elements:
         for element in message.elements:
             path = getattr(element, "path", None)
             name = getattr(element, "name", "unknown_file")
+            mime = getattr(element, "mime", "")
+
             if path:
-                try:
-                    with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                        raw = fh.read(80_000)
-                    file_context += f"\n\n---\n📄 **Uploaded file: {name}**\n```\n{raw}\n```"
-                except Exception as exc:
-                    file_context += f"\n\n❌ Could not read '{name}': {exc}"
+                # For non-text files, just note the path
+                if mime and not mime.startswith("text/") and "json" not in mime and "xml" not in mime:
+                    file_context += f"\n\n📎 **ملف مرفق: {name}** — المسار: `{path}` (نوع: {mime})"
+                else:
+                    try:
+                        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                            raw = fh.read(80_000)
+                        file_context += f"\n\n---\n📄 **ملف مرفق: {name}**\n```\n{raw}\n```"
+                    except Exception as exc:
+                        file_context += f"\n\n❌ تعذرت قراءة '{name}': {exc}"
+
     full_text = user_text + file_context
+
     # ── Initial graph run ─────────────────────────────────────────────────────
     inputs = {"messages": [HumanMessage(content=full_text)]}
     await _run_graph(inputs, config)
     await _handle_hitl_loop(config)
+
     # ── Post-run error summary ────────────────────────────────────────────────
-    # Only show errors if the last reviewer message contains FAILED:
-    # (never show old task errors after a new task completes successfully)
     try:
         final_state = GRAPH.get_state(config)
-        errors      = final_state.values.get("error_logs", [])
-        # Check if the task ended with FAILED verdict
-        messages = final_state.values.get("messages", [])
+        errors = final_state.values.get("error_logs", [])
+        messages_list = final_state.values.get("messages", [])
         last_verdict = ""
-        for msg in reversed(messages):
+        for msg in reversed(messages_list):
             content = getattr(msg, "content", "")
             if isinstance(content, str) and ("FAILED:" in content or "TASK_COMPLETE:" in content):
                 last_verdict = content[:20]
                 break
-        # Only show error log if task explicitly FAILED
+
         if errors and "FAILED:" in last_verdict:
             await cl.Message(
                 content=(
-                    f"📋 **Session error log** — {len(errors)} issue(s) recorded:\n"
+                    f"📋 **سجل الأخطاء** — {len(errors)} مشكلة مسجلة:\n"
                     + "\n".join(f"  • {e[:200]}" for e in errors[-5:])
                 )
             ).send()
