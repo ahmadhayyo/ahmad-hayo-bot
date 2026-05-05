@@ -77,10 +77,10 @@ GRAPH = None
 
 
 async def _init_graph():
-    """Initialize the graph asynchronously."""
+    """Initialize the graph."""
     global GRAPH
     if GRAPH is None:
-        GRAPH = await compile_graph()
+        GRAPH = compile_graph()
     return GRAPH
 
 
