@@ -73,11 +73,12 @@ _CONTINUE_KEYWORDS = {
 }
 
 # ── Global graph variable (initialized at startup) ────────────────────────────
-GRAPH = None
+# compile_graph() is SYNCHRONOUS — never use 'await' on it.
+GRAPH = compile_graph()
 
 
-async def _init_graph():
-    """Initialize the graph."""
+def _get_graph():
+    """Return the compiled graph (already initialized at module load)."""
     global GRAPH
     if GRAPH is None:
         GRAPH = compile_graph()
@@ -137,7 +138,7 @@ async def _run_graph(input_or_command, config: dict) -> None:
     """Stream a single graph invocation and display steps in Chainlit."""
     global GRAPH
     if GRAPH is None:
-        GRAPH = await _init_graph()
+        GRAPH = _get_graph()
 
     response_msg = cl.Message(content="")
     await response_msg.send()
@@ -194,7 +195,7 @@ async def _handle_hitl_loop(config: dict) -> None:
     """Handle Human-in-the-Loop interrupts after each graph run."""
     global GRAPH
     if GRAPH is None:
-        GRAPH = await _init_graph()
+        GRAPH = _get_graph()
 
     while True:
         state = GRAPH.get_state(config)
@@ -282,8 +283,7 @@ async def _handle_hitl_loop(config: dict) -> None:
 async def on_chat_start() -> None:
     """Generate or restore a session thread_id and set up model selector."""
     global GRAPH
-    if GRAPH is None:
-        GRAPH = await _init_graph()
+    GRAPH = _get_graph()
 
     last_session = _load_last_session()
     last_thread = last_session.get("thread_id")
@@ -355,8 +355,7 @@ async def on_chat_start() -> None:
 @cl.on_message
 async def on_message(message: cl.Message) -> None:
     global GRAPH
-    if GRAPH is None:
-        GRAPH = await _init_graph()
+    GRAPH = _get_graph()
 
     thread_id: str = cl.user_session.get("thread_id")
     config: dict = {"configurable": {"thread_id": thread_id}}
