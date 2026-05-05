@@ -77,6 +77,21 @@ from tools.audio_tools import (
     text_to_speech,
     volume_control,
 )
+from tools.office_tools import (
+    excel_create,
+    excel_read,
+    excel_edit,
+    excel_add_rows,
+    excel_add_column,
+    word_create,
+    word_read,
+    word_edit,
+    pdf_read,
+    pdf_create,
+    pdf_merge,
+    convert_excel_to_pdf,
+    convert_word_to_pdf,
+)
 
 ALL_TOOLS: list[BaseTool] = [
     # ═══════════════════════════════════════════════════════════
@@ -163,6 +178,23 @@ ALL_TOOLS: list[BaseTool] = [
     text_to_speech,
     show_notification,
     play_sound,
+
+    # ═══════════════════════════════════════════════════════════
+    # OFFICE (Excel, Word, PDF)
+    # ═══════════════════════════════════════════════════════════
+    excel_create,
+    excel_read,
+    excel_edit,
+    excel_add_rows,
+    excel_add_column,
+    word_create,
+    word_read,
+    word_edit,
+    pdf_read,
+    pdf_create,
+    pdf_merge,
+    convert_excel_to_pdf,
+    convert_word_to_pdf,
 ]
 
 TOOLS_BY_NAME: dict[str, BaseTool] = {t.name: t for t in ALL_TOOLS}
