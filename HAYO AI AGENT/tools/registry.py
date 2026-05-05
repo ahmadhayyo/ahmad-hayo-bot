@@ -51,13 +51,49 @@ from tools.file_tools import (
     write_file,
 )
 from tools.system_tools import get_env, run_cmd, run_powershell
+from tools.clipboard_tools import (
+    clipboard_get,
+    clipboard_set,
+    clipboard_append,
+)
+from tools.process_tools import (
+    get_system_info,
+    kill_process,
+    list_processes,
+    manage_service,
+    scheduled_task,
+)
+from tools.network_tools import (
+    check_port,
+    dns_lookup,
+    get_network_info,
+    get_public_ip,
+    ping_host,
+    wifi_management,
+)
+from tools.audio_tools import (
+    play_sound,
+    show_notification,
+    text_to_speech,
+    volume_control,
+)
 
 ALL_TOOLS: list[BaseTool] = [
-    # Shell
+    # ═══════════════════════════════════════════════════════════
+    # SHELL & SYSTEM
+    # ═══════════════════════════════════════════════════════════
     run_powershell,
     run_cmd,
     get_env,
-    # File system
+    get_system_info,
+    list_processes,
+    kill_process,
+    manage_service,
+    scheduled_task,
+
+    # ═══════════════════════════════════════════════════════════
+    # FILE SYSTEM
+    # ═══════════════════════════════════════════════════════════
     read_file,
     write_file,
     append_file,
@@ -67,12 +103,25 @@ ALL_TOOLS: list[BaseTool] = [
     copy_file,
     download_file,
     make_dir,
-    # Apps
+
+    # ═══════════════════════════════════════════════════════════
+    # CLIPBOARD
+    # ═══════════════════════════════════════════════════════════
+    clipboard_get,
+    clipboard_set,
+    clipboard_append,
+
+    # ═══════════════════════════════════════════════════════════
+    # APPLICATIONS
+    # ═══════════════════════════════════════════════════════════
     open_app,
     close_app,
     list_running_apps,
     focus_window,
-    # Browser
+
+    # ═══════════════════════════════════════════════════════════
+    # BROWSER (Playwright persistent session)
+    # ═══════════════════════════════════════════════════════════
     browser_open,
     browser_get_text,
     browser_click,
@@ -83,7 +132,10 @@ ALL_TOOLS: list[BaseTool] = [
     browser_eval_js,
     browser_wait_for,
     browser_close,
-    # Desktop
+
+    # ═══════════════════════════════════════════════════════════
+    # DESKTOP GUI (pyautogui — pixel-level control)
+    # ═══════════════════════════════════════════════════════════
     screen_screenshot,
     screen_size,
     mouse_click,
@@ -93,6 +145,24 @@ ALL_TOOLS: list[BaseTool] = [
     keyboard_hotkey,
     list_windows,
     wait,
+
+    # ═══════════════════════════════════════════════════════════
+    # NETWORK
+    # ═══════════════════════════════════════════════════════════
+    get_network_info,
+    get_public_ip,
+    ping_host,
+    check_port,
+    wifi_management,
+    dns_lookup,
+
+    # ═══════════════════════════════════════════════════════════
+    # AUDIO & NOTIFICATIONS
+    # ═══════════════════════════════════════════════════════════
+    volume_control,
+    text_to_speech,
+    show_notification,
+    play_sound,
 ]
 
 TOOLS_BY_NAME: dict[str, BaseTool] = {t.name: t for t in ALL_TOOLS}

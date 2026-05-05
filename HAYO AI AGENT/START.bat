@@ -1,49 +1,85 @@
 @echo off
-title Ultimate Agent — Starting...
+chcp 65001 >nul 2>&1
+title HAYO AI Agent — Starting...
 color 0A
 
 echo.
-echo  ╔══════════════════════════════════════════════════╗
-echo  ║   Ultimate Secure Local OS Executive Agent       ║
-echo  ║   Starting server — please wait...               ║
-echo  ╚══════════════════════════════════════════════════╝
+echo  ╔══════════════════════════════════════════════════════════╗
+echo  ║                                                          ║
+echo  ║     🤖  HAYO AI Agent — وكيل ذكي خارق القدرات            ║
+echo  ║                                                          ║
+echo  ║     Starting server — please wait...                     ║
+echo  ║                                                          ║
+echo  ╚══════════════════════════════════════════════════════════╝
 echo.
 
-:: Move to the project folder
-cd /d "C:\HAYO AI AGENT"
+:: Move to the project folder (works from any location)
+cd /d "%~dp0"
+
+:: Check if venv exists, create if not
+if not exist "venv\Scripts\activate.bat" (
+    echo  [..] Creating virtual environment...
+    python -m venv venv
+    if errorlevel 1 (
+        echo  [ERROR] Failed to create virtual environment.
+        echo  Make sure Python 3.10+ is installed and in PATH.
+        pause
+        exit /b 1
+    )
+    echo  [OK] Virtual environment created.
+)
 
 :: Activate the virtual environment
 call venv\Scripts\activate.bat
-
-:: Check if activation succeeded
 if errorlevel 1 (
     echo  [ERROR] Could not activate virtual environment.
-    echo  Make sure 'venv' folder exists inside C:\HAYO AI AGENT
     pause
     exit /b 1
 )
-
 echo  [OK] Virtual environment activated.
 echo.
 
-:: Install / update dependencies silently (only if needed)
+:: Install / update dependencies
 echo  [..] Checking dependencies...
-pip install langgraph-checkpoint-sqlite aiosqlite duckduckgo-search --quiet --exists-action i >nul 2>&1
+pip install -r requirements.txt --quiet --exists-action i >nul 2>&1
 echo  [OK] Dependencies up to date.
 echo.
 
-:: Launch Chainlit — it will open the browser automatically
-echo  [OK] Launching agent UI...
-echo  [>>] Opening http://localhost:8000 in your browser.
-echo.
-echo  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-echo  Press CTRL+C to stop the server when you are done.
-echo  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+:: Install Playwright browsers if not already installed
+echo  [..] Checking Playwright browsers...
+python -m playwright install chromium --with-deps >nul 2>&1
+echo  [OK] Browser ready.
 echo.
 
+:: Check .env file exists
+if not exist ".env" (
+    echo  [WARNING] .env file not found!
+    echo  Creating a template .env file...
+    echo MODEL_PROVIDER=google> .env
+    echo GOOGLE_API_KEY=YOUR_KEY_HERE>> .env
+    echo ANTHROPIC_API_KEY=>> .env
+    echo OPENAI_API_KEY=>> .env
+    echo DEEPSEEK_API_KEY=>> .env
+    echo.
+    echo  [!] Please edit .env and add your API keys.
+    echo.
+)
+
+:: Launch Chainlit
+echo  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+echo.
+echo  🌐 Opening http://localhost:8000
+echo  📋 Model: Check .env for MODEL_PROVIDER setting
+echo.
+echo  Press CTRL+C to stop the server.
+echo  Or double-click STOP.bat to stop from another window.
+echo.
+echo  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+echo.
+
+start "" http://localhost:8000
 chainlit run app.py --port 8000
 
-:: If chainlit exits, pause so user can read any error messages
 echo.
 echo  [!] Server stopped.
 pause

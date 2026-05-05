@@ -15,10 +15,10 @@ and a relentless drive to complete every task fully from start to finish.
 
 Human-in-the-Loop (HITL)
 ------------------------
-WorkerNode intercepts two special sentinel strings returned by tools:
+WorkerNode intercepts special sentinel strings returned by tools:
 
-  HITL_FLAG  (from execute_powershell)  →  destructive OS command detected
-  CAPTCHA_FLAG (from browser_automation) →  CAPTCHA/anti-bot wall detected
+  "__HITL_REQUIRED__" / "HITL_APPROVAL_REQUIRED:" → destructive OS command detected
+  "CAPTCHA_DETECTED"                              → CAPTCHA/anti-bot wall detected
 
 In both cases WorkerNode calls LangGraph's interrupt(payload) which:
   1. Saves the current graph state via SqliteSaver.
@@ -38,6 +38,10 @@ Multi-Provider Support
 ----------------------
 Set MODEL_PROVIDER=google    in .env to use Google Gemini.
 Set MODEL_PROVIDER=anthropic in .env to use Anthropic Claude.
+Set MODEL_PROVIDER=openai    in .env to use OpenAI ChatGPT.
+Set MODEL_PROVIDER=deepseek  in .env to use DeepSeek.
+
+Provider can also be switched at runtime via the UI model selector.
 """
 
 from __future__ import annotations
@@ -51,22 +55,8 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.types import interrupt
 
 from core.state import AgentState
-from tools.os_core import (
-    HITL_FLAG,
-    execute_powershell,
-    manage_files,
-    read_file_content,
-)
-from tools.web_and_cloud import (
-    CAPTCHA_FLAG,
-    browser_automation,
-    git_operations,
-)
-from tools.web_tools import (
-    download_file,
-    web_search,
-)
-from tools.desktop_control import desktop_control
+from core.safety import needs_human_approval
+from tools.registry import ALL_TOOLS, TOOLS_BY_NAME
 
 # ── Environment ───────────────────────────────────────────────────────────────
 MAX_HISTORY:    int = int(os.getenv("MAX_HISTORY",    "15"))
@@ -78,9 +68,15 @@ _PROVIDER = os.getenv("MODEL_PROVIDER", "google").lower().strip()
 
 # ── LLM Factory ───────────────────────────────────────────────────────────────
 
-def _build_llm(role: Literal["main", "summarizer"]) -> BaseChatModel:
-    """Return the correct LangChain chat model based on MODEL_PROVIDER in .env."""
-    if _PROVIDER == "google":
+def _build_llm(role: Literal["main", "summarizer"], provider: str | None = None) -> BaseChatModel:
+    """Return the correct LangChain chat model based on provider.
+    
+    If provider is None, uses _PROVIDER (from .env MODEL_PROVIDER).
+    This allows runtime model switching from the UI.
+    """
+    prov = (provider or _PROVIDER).lower().strip()
+
+    if prov == "google":
         from langchain_google_genai import ChatGoogleGenerativeAI
 
         if role == "main":
@@ -93,7 +89,7 @@ def _build_llm(role: Literal["main", "summarizer"]) -> BaseChatModel:
                 convert_system_message_to_human=False,
             )
         else:
-            model_name = os.getenv("GOOGLE_SUMMARIZER_MODEL", "gemini-2.5-flash")
+            model_name = os.getenv("GOOGLE_SUMMARIZER_MODEL", "gemini-2.0-flash")
             return ChatGoogleGenerativeAI(
                 model=model_name,
                 google_api_key=os.getenv("GOOGLE_API_KEY"),
@@ -101,11 +97,11 @@ def _build_llm(role: Literal["main", "summarizer"]) -> BaseChatModel:
                 max_output_tokens=2_048,
             )
 
-    elif _PROVIDER == "anthropic":
+    elif prov == "anthropic":
         from langchain_anthropic import ChatAnthropic
 
         if role == "main":
-            model_name = os.getenv("ANTHROPIC_AGENT_MODEL", "claude-3-7-sonnet-20250219")
+            model_name = os.getenv("ANTHROPIC_AGENT_MODEL", "claude-sonnet-4-20250514")
             return ChatAnthropic(
                 model=model_name,
                 max_tokens=8_192,
@@ -118,29 +114,71 @@ def _build_llm(role: Literal["main", "summarizer"]) -> BaseChatModel:
                 max_tokens=2_048,
             )
 
+    elif prov == "openai":
+        from langchain_openai import ChatOpenAI
+
+        if role == "main":
+            model_name = os.getenv("OPENAI_AGENT_MODEL", "gpt-4o")
+            return ChatOpenAI(
+                model=model_name,
+                api_key=os.getenv("OPENAI_API_KEY"),
+                temperature=0.0,
+                streaming=True,
+            )
+        else:
+            model_name = os.getenv("OPENAI_SUMMARIZER_MODEL", "gpt-4o-mini")
+            return ChatOpenAI(
+                model=model_name,
+                api_key=os.getenv("OPENAI_API_KEY"),
+                temperature=0.0,
+                max_tokens=2_048,
+            )
+
+    elif prov == "deepseek":
+        from langchain_openai import ChatOpenAI
+
+        base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+        if role == "main":
+            model_name = os.getenv("DEEPSEEK_AGENT_MODEL", "deepseek-chat")
+            return ChatOpenAI(
+                model=model_name,
+                api_key=os.getenv("DEEPSEEK_API_KEY"),
+                base_url=base_url,
+                temperature=0.0,
+                streaming=True,
+            )
+        else:
+            model_name = os.getenv("DEEPSEEK_SUMMARIZER_MODEL", "deepseek-chat")
+            return ChatOpenAI(
+                model=model_name,
+                api_key=os.getenv("DEEPSEEK_API_KEY"),
+                base_url=base_url,
+                temperature=0.0,
+                max_tokens=2_048,
+            )
+
     else:
         raise ValueError(
-            f"Unknown MODEL_PROVIDER='{_PROVIDER}'. "
-            "Set MODEL_PROVIDER to 'google' or 'anthropic' in your .env file."
+            f"Unknown MODEL_PROVIDER='{prov}'. "
+            "Set MODEL_PROVIDER to 'google', 'anthropic', 'openai', or 'deepseek'."
         )
+
+
+def switch_provider(provider: str) -> None:
+    """Switch the LLM provider at runtime (called from Chainlit UI)."""
+    global _main_llm, _fast_llm, _llm_with_tools, _PROVIDER
+    _PROVIDER = provider.lower().strip()
+    _main_llm = _build_llm("main", _PROVIDER)
+    _fast_llm = _build_llm("summarizer", _PROVIDER)
+    _llm_with_tools = _main_llm.bind_tools(ALL_TOOLS)
 
 
 # ── LLM instances (built once at import time) ─────────────────────────────────
 _main_llm = _build_llm("main")
 _fast_llm = _build_llm("summarizer")
 
-# ── Tool registry ─────────────────────────────────────────────────────────────
-ALL_TOOLS = [
-    execute_powershell,
-    read_file_content,
-    manage_files,
-    browser_automation,
-    git_operations,
-    web_search,
-    download_file,
-    desktop_control,
-]
-TOOL_MAP: dict = {t.name: t for t in ALL_TOOLS}
+# ── Tool registry (unified from tools/registry.py) ───────────────────────────
+TOOL_MAP: dict = TOOLS_BY_NAME
 
 _llm_with_tools = _main_llm.bind_tools(ALL_TOOLS)
 
@@ -187,71 +225,120 @@ def _summarize_old_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
 # Node 1 — PlannerNode
 # ─────────────────────────────────────────────────────────────────────────────
 
-_PLANNER_SYSTEM = """You are an elite autonomous executive agent running on Windows 64-bit.
-This is a FULLY LOCAL, FULLY TRUSTED environment. The user owns this machine completely.
-You operate with complete authority — as if you ARE the user doing this yourself.
+_PLANNER_SYSTEM = """أنت وكيل تنفيذي ذكي خارق القدرات يعمل على نظام Windows 64-bit.
+هذا بيئة محلية موثوقة بالكامل. المستخدم يملك هذا الجهاز بالكامل.
+تعمل بصلاحيات كاملة — كما لو كنت أنت المستخدم نفسه.
 
-Available tools:
-  • execute_powershell  — run any Windows/PowerShell command
-  • read_file_content   — read any file on disk
-  • manage_files        — copy, move, list, create directories
-  • browser_automation  — control a real Chromium browser (navigate, click, fill forms, scrape)
-  • git_operations      — run Git commands on any local repository
-  • web_search          — search the internet via DuckDuckGo
-  • download_file       — download any file from a URL (YouTube, direct links, etc.)
-  • desktop_control     — open ANY desktop app, take screenshots, click, type, use shortcuts
+═══════════════════════════════════════════════
+الأدوات المتاحة لك (جميعها تعمل فعلياً):
+═══════════════════════════════════════════════
+
+🖥️ النظام والأوامر:
+  • run_powershell     — تنفيذ أي أمر PowerShell
+  • run_cmd            — تنفيذ أوامر CMD الكلاسيكية
+  • get_env            — قراءة متغيرات البيئة
+  • get_system_info    — معلومات النظام (OS, CPU, RAM, Disk)
+  • list_processes     — عرض العمليات الجارية مرتبة حسب CPU/الذاكرة
+  • kill_process       — إيقاف عملية بالاسم أو PID
+  • manage_service     — إدارة خدمات Windows (start/stop/restart/status)
+  • scheduled_task     — إدارة المهام المجدولة
+
+📁 نظام الملفات:
+  • read_file          — قراءة أي ملف نصي
+  • write_file         — إنشاء أو كتابة ملف
+  • append_file        — إلحاق نص بملف موجود
+  • list_dir           — عرض محتويات مجلد
+  • search_files       — بحث glob في المجلدات
+  • move_file          — نقل أو إعادة تسمية ملف/مجلد
+  • copy_file          — نسخ ملف أو مجلد
+  • download_file      — تحميل ملف من URL إلى القرص
+  • make_dir           — إنشاء مجلد جديد
+
+📋 الحافظة:
+  • clipboard_get      — قراءة محتوى الحافظة
+  • clipboard_set      — تعيين نص في الحافظة
+  • clipboard_append   — إلحاق نص بالحافظة
+
+🚀 التطبيقات:
+  • open_app           — فتح أي تطبيق (chrome, word, vscode, ...)
+  • close_app          — إغلاق تطبيق
+  • list_running_apps  — عرض التطبيقات المفتوحة
+  • focus_window       — جلب نافذة للأمام
+
+🌐 المتصفح (Playwright — جلسة دائمة):
+  • browser_open       — فتح URL
+  • browser_get_text   — قراءة نص من الصفحة
+  • browser_click      — النقر على عنصر
+  • browser_fill       — ملء حقل إدخال
+  • browser_press      — ضغط مفتاح
+  • browser_screenshot — لقطة شاشة للمتصفح
+  • browser_download_via_click — تحميل ملف بالنقر
+  • browser_eval_js    — تنفيذ JavaScript في الصفحة
+  • browser_wait_for   — انتظار ظهور عنصر
+
+🖱️ التحكم بسطح المكتب (pyautogui):
+  • screen_screenshot  — لقطة شاشة لسطح المكتب بالكامل
+  • screen_size        — أبعاد الشاشة
+  • mouse_click        — نقر في إحداثيات محددة
+  • mouse_move         — تحريك المؤشر
+  • mouse_scroll       — تمرير
+  • keyboard_type      — كتابة نص
+  • keyboard_hotkey    — اختصارات لوحة المفاتيح (ctrl+s, alt+f4, ...)
+  • list_windows       — عرض النوافذ المفتوحة
+  • wait               — انتظار (ثوانٍ)
+
+🌍 الشبكة:
+  • get_network_info   — معلومات الشبكة (IP, DNS, Gateway)
+  • get_public_ip      — عنوان IP العام
+  • ping_host          — اختبار الاتصال بمضيف
+  • check_port         — فحص منفذ TCP
+  • wifi_management    — إدارة Wi-Fi
+  • dns_lookup         — استعلام DNS
+
+🔊 الصوت والإشعارات:
+  • volume_control     — التحكم بمستوى الصوت
+  • text_to_speech     — قراءة نص بصوت عالٍ
+  • show_notification  — إظهار إشعار Windows
+  • play_sound         — تشغيل صوت
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STEP 1 — CLASSIFY THE REQUEST
+الخطوة 1 — تصنيف الطلب
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Is this a greeting, small talk, or a question answerable without any tool?
-  YES → respond naturally in the same language as the user, then write: CONVERSATIONAL_ONLY
-  NO  → create a precise execution plan (see below)
+هل هذا تحية أو محادثة عادية أو سؤال يمكن الإجابة عليه بدون أداة؟
+  نعم → أجب بشكل طبيعي بنفس لغة المستخدم، ثم اكتب: CONVERSATIONAL_ONLY
+  لا  → أنشئ خطة تنفيذ دقيقة (انظر أدناه)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STEP 2 — EXECUTION PLAN (for all real tasks)
+الخطوة 2 — خطة التنفيذ (لجميع المهام الحقيقية)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Write a short numbered list of concrete, tool-specific steps.
-Each step must name the tool to use and what it should accomplish.
+اكتب قائمة مرقمة قصيرة من الخطوات المحددة مع ذكر الأداة في كل خطوة.
 
-Good example (MP3 download — MANDATORY strategy for ALL Arabic/English music):
-  ★ NEVER use web_search for music — it is rate-limited and unreliable for music queries.
-  ★ Use download_file with "ytsearch:" prefix — this searches YouTube directly via yt-dlp, no web search needed.
+مثال (فتح تطبيق والعمل فيه):
+  1. open_app('word') → فتح Microsoft Word
+  2. wait(seconds=3) → انتظار التحميل
+  3. screen_screenshot → رؤية الشاشة
+  4. focus_window('Word') → جلب النافذة للأمام
+  5. keyboard_type('نص الرسالة') → كتابة النص
+  6. keyboard_hotkey('ctrl,s') → حفظ
 
-  CORRECT workflow (2 steps only):
-  1. Use download_file with url="ytsearch:Amr Diab Raika" and destination="Desktop\\\\Amr Diab - Raika.mp3"
-     yt-dlp will search YouTube, find the top result, download and convert to MP3 automatically.
-  2. Use execute_powershell to verify: Test-Path "$HOME\\Desktop\\Amr Diab - Raika.mp3"
+مثال (تحميل ملف من الإنترنت):
+  1. browser_open(url='https://example.com/file.pdf')
+  2. download_file(url='...', dest='desktop:file.pdf')
+  3. run_powershell → Test-Path للتحقق
 
-  Examples:
-    url="ytsearch:Tamer Hosny Bahebak" → finds "تامر حسني بحبك" on YouTube and downloads it
-    url="ytsearch:Amr Diab Nour El Ain" → finds "عمرو دياب نور العين" and downloads it
-    url="ytsearch:Nancy Ajram Ya Tabtab" → finds the song and downloads it
+مثال (إصلاح مشكلة في النظام):
+  1. get_system_info → فهم حالة النظام
+  2. list_processes(sort_by='memory') → فحص العمليات
+  3. run_powershell → تنفيذ أوامر الإصلاح
+  4. run_powershell → التحقق من النتيجة
 
-  ⚠️ FORBIDDEN: Never use web_search to find music URLs.
-  ⚠️ FORBIDDEN: Never download from albumaty.com, anghami.com, or any other music site.
-  ⚠️ FORBIDDEN: Never search for "mp3 direct download" — use ytsearch: instead.
-
-Good example (open and control a desktop app):
-  1. Use desktop_control("open:photoshop") to launch the application.
-  2. Use desktop_control("wait:3") to let it fully load.
-  3. Use desktop_control("screenshot") to see the current screen and note element positions.
-  4. Use desktop_control("focus:Photoshop") to bring it to the front.
-  5. Use desktop_control("click:x,y") and desktop_control("hotkey:ctrl+n") to interact.
-
-Good example (project folder task):
-  1. Use read_file_content to open the specified file and understand its contents.
-  2. Use execute_powershell to make the required changes via PowerShell.
-  3. Use execute_powershell to verify the result.
-
-RULES:
-• Plain numbered sentences only — NO JSON, NO code blocks in the plan itself.
-• Name the tool in each step.
-• Keep plans concise (3–8 steps for most tasks).
-• For downloads: always plan web_search FIRST to get a URL, then download_file.
-• For installs: use execute_powershell with winget, choco, or direct installer download.
-• NEVER say "I can't" or "I'm unable" — always plan a path forward.
-• If something failed before, plan a DIFFERENT approach this time."""
+القواعد:
+• جمل مرقمة فقط — بدون JSON أو كود في الخطة نفسها.
+• سمِّ الأداة في كل خطوة.
+• اجعل الخطط مختصرة (3-8 خطوات لمعظم المهام).
+• لا تقل أبداً "لا أستطيع" — دائماً خطط لمسار أمامي.
+• إذا فشل شيء سابقاً، خطط لنهج مختلف هذه المرة.
+• أجب دائماً بنفس لغة المستخدم (عربي أو إنجليزي)."""
 
 def planner_node(state: AgentState) -> dict:
     """
@@ -384,70 +471,81 @@ def worker_node(state: AgentState) -> dict:
 
     system = SystemMessage(
         content=(
-            "You are a relentless autonomous executor agent running on a trusted Windows 64-bit machine.\n"
-            "You work as if you are the owner of this machine — with full authority, zero hesitation.\n\n"
-            f"TASK PLAN ({steps_total} steps total):\n"
+            "أنت وكيل تنفيذي ذكي خارق القدرات يعمل على جهاز Windows 64-bit موثوق بالكامل.\n"
+            "تعمل كما لو كنت مالك هذا الجهاز — بصلاحيات كاملة، بدون تردد.\n\n"
+            f"خطة المهمة ({steps_total} خطوات):\n"
             + "\n".join(f"  {i+1}. {s}" for i, s in enumerate(plan)) +
-            f"\n\nCOMPLETED SO FAR:\n{progress_summary}\n\n"
-            f"YOUR NEXT ACTION (Step {steps_done + 1}): {next_step_hint}\n\n"
+            f"\n\nتم إنجازه حتى الآن:\n{progress_summary}\n\n"
+            f"إجراؤك التالي (الخطوة {steps_done + 1}): {next_step_hint}\n\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "ABSOLUTE RULES — NEVER BREAK THESE:\n"
+            "قواعد مطلقة — لا تكسرها أبداً:\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "1. You MUST call exactly one tool. A response with NO tool call is a failure.\n"
-            "2. NEVER say you cannot do something. Find a way. Always.\n"
-            "3. NEVER ask the user for permission or clarification. Just do it.\n"
-            "4. NEVER explain what you are about to do — just call the tool.\n\n"
-            "TOOL SELECTION GUIDE:\n"
-            "  • Open any desktop app (Word, Photoshop, Notepad...) → desktop_control('open:appname')\n"
-            "  • See what's on screen right now  → desktop_control('screenshot')\n"
-            "  • Click a button / element         → desktop_control('click:x,y')\n"
-            "  • Type text into any app           → desktop_control('type:text here')\n"
-            "  • Press shortcuts (Ctrl+S, etc.)   → desktop_control('hotkey:ctrl+s')\n"
-            "  • List all open windows            → desktop_control('list_windows')\n"
-            "  • Searching the internet           → web_search\n"
-            "  • Downloading a file from a URL    → download_file\n"
-            "  • Web browser: login/scrape/fill   → browser_automation\n"
-            "  • Any PowerShell / CMD command     → execute_powershell\n"
-            "  • Reading a file on disk           → read_file_content\n"
-            "  • Copy/move/create folders         → manage_files\n"
-            "  • Git operations on a repo         → git_operations\n\n"
-            "DESKTOP APP WORKFLOW:\n"
-            "  Step 1: desktop_control('open:<appname>') → launch the app\n"
-            "  Step 2: desktop_control('wait:2')         → wait for it to load\n"
-            "  Step 3: desktop_control('screenshot')     → see the screen + get coordinates\n"
-            "  Step 4: desktop_control('focus:<title>')  → bring app to front\n"
-            "  Step 5: desktop_control('click:x,y')      → click where needed\n"
-            "  Step 6: desktop_control('type:...')       → enter text\n"
-            "  Step 7: desktop_control('hotkey:ctrl+s')  → save/action\n\n"
-            "POWERSHELL SPEED RULES:\n"
-            "  • NEVER use 'Get-ComputerInfo' (too slow) — use registry queries instead\n"
-            "  • NEVER use 'Get-Counter' — use Get-WmiObject Win32_OperatingSystem\n"
-            "  • Prefer simple, fast commands (under 5 seconds)\n\n"
-            "DOWNLOAD STRATEGY FOR MUSIC (MP3) — MANDATORY:\n"
-            "  ★ NEVER use web_search for music — DuckDuckGo is rate-limited and unreliable.\n"
-            "  ★ Use download_file with 'ytsearch:' prefix — searches YouTube directly, no web search needed.\n\n"
-            "  CORRECT workflow (2 steps only):\n"
-            "    Step 1: download_file(url='ytsearch:Amr Diab Raika', destination='Desktop\\\\song.mp3')\n"
-            "            yt-dlp searches YouTube, picks top result, downloads and converts to MP3.\n"
-            "    Step 2: execute_powershell → Test-Path \"$HOME\\Desktop\\song.mp3\" to verify.\n\n"
-            "  Examples of valid ytsearch: urls:\n"
-            "    ytsearch:Tamer Hosny Bahebak\n"
-            "    ytsearch:Amr Diab Nour El Ain\n"
-            "    ytsearch:Nancy Ajram Ya Tabtab\n\n"
-            "  ⚠️ FORBIDDEN: web_search for music, albumaty.com, anghami.com, archive.org.\n\n"
-            "ERROR RECOVERY:\n"
-            "  • If last tool returned an error → try a COMPLETELY DIFFERENT approach\n"
-            "  • If a URL failed → search for another URL with different keywords\n"
-            "  • If PowerShell failed → try a different command for the same goal\n\n"
-            "FILE SEARCH RULE (CRITICAL):\n"
-            "  • If a file was NOT found by manage_files → use execute_powershell to search:\n"
-            "    Get-ChildItem -Path 'C:\\Users\\PT\\Desktop' -Recurse -Filter '*keyword*' | Select FullName\n"
-            "  • NEVER ask the user 'where is the file?' — always search yourself first.\n"
-            "  • If search returns nothing → report FAILED with the search results shown.\n\n"
-            "TOPIC CHANGE RULE (CRITICAL):\n"
-            "  • If the user changed their request (e.g., 'forget the song, look at my project'),\n"
-            "    the OLD task is CANCELLED. Do NOT continue it. Execute only the NEW request.\n"
-            "  • Read the user's latest message carefully — it overrides all previous tasks."
+            "1. يجب أن تستدعي أداة واحدة على الأقل. استجابة بدون أداة = فشل.\n"
+            "2. لا تقل أبداً أنك لا تستطيع. ابحث عن طريقة. دائماً.\n"
+            "3. لا تطلب إذن المستخدم أو توضيح. فقط نفذ.\n"
+            "4. لا تشرح ما ستفعله — فقط استدعِ الأداة.\n\n"
+            "دليل اختيار الأدوات:\n"
+            "  📂 الملفات:\n"
+            "    • قراءة ملف                    → read_file(path='...')\n"
+            "    • كتابة ملف                    → write_file(path='...', content='...')\n"
+            "    • عرض محتويات مجلد              → list_dir(path='...')\n"
+            "    • بحث عن ملفات                  → search_files(root='...', pattern='*.pdf')\n"
+            "    • نسخ/نقل ملف                   → copy_file / move_file\n"
+            "    • تحميل من URL                  → download_file(url='...', dest='desktop:file.pdf')\n"
+            "    • إنشاء مجلد                    → make_dir(path='...')\n\n"
+            "  🚀 التطبيقات:\n"
+            "    • فتح تطبيق                     → open_app(name='chrome')\n"
+            "    • إغلاق تطبيق                   → close_app(name='notepad')\n"
+            "    • جلب نافذة للأمام               → focus_window(title='...')\n\n"
+            "  🖱️ سطح المكتب (GUI):\n"
+            "    • لقطة شاشة                     → screen_screenshot()\n"
+            "    • نقر في إحداثيات               → mouse_click(x=100, y=200)\n"
+            "    • كتابة نص                      → keyboard_type(text='...')\n"
+            "    • اختصار لوحة مفاتيح            → keyboard_hotkey(keys='ctrl,s')\n"
+            "    • قائمة النوافذ                  → list_windows()\n"
+            "    • انتظار                        → wait(seconds=2)\n\n"
+            "  🌐 المتصفح:\n"
+            "    • فتح صفحة                      → browser_open(url='https://...')\n"
+            "    • قراءة نص الصفحة               → browser_get_text()\n"
+            "    • نقر على عنصر                  → browser_click(selector='...')\n"
+            "    • ملء حقل                       → browser_fill(selector='...', value='...')\n"
+            "    • لقطة شاشة المتصفح             → browser_screenshot()\n\n"
+            "  💻 الأوامر:\n"
+            "    • PowerShell                    → run_powershell(command='...')\n"
+            "    • CMD                           → run_cmd(command='...')\n\n"
+            "  🔧 النظام:\n"
+            "    • معلومات النظام                → get_system_info()\n"
+            "    • العمليات الجارية               → list_processes(sort_by='memory')\n"
+            "    • إيقاف عملية                   → kill_process(target='chrome')\n"
+            "    • إدارة خدمة                    → manage_service(service_name='...', action='status')\n\n"
+            "  📋 الحافظة:\n"
+            "    • قراءة الحافظة                 → clipboard_get()\n"
+            "    • كتابة في الحافظة              → clipboard_set(text='...')\n\n"
+            "  🌍 الشبكة:\n"
+            "    • معلومات الشبكة                → get_network_info()\n"
+            "    • فحص اتصال                     → ping_host(host='google.com')\n"
+            "    • فحص منفذ                      → check_port(host='...', port=80)\n\n"
+            "  🔊 الصوت:\n"
+            "    • التحكم بالصوت                 → volume_control(action='set', level=50)\n"
+            "    • قراءة نص بصوت عالٍ            → text_to_speech(text='...')\n"
+            "    • إشعار Windows                 → show_notification(title='...', message='...')\n\n"
+            "استراتيجية العمل مع التطبيقات:\n"
+            "  1. open_app('appname') → فتح التطبيق\n"
+            "  2. wait(seconds=3)     → انتظار التحميل\n"
+            "  3. screen_screenshot() → رؤية الشاشة والإحداثيات\n"
+            "  4. focus_window('...')  → جلب النافذة للأمام\n"
+            "  5. mouse_click(x,y)    → نقر\n"
+            "  6. keyboard_type('...')→ كتابة\n"
+            "  7. keyboard_hotkey('ctrl,s') → حفظ\n\n"
+            "قواعد سرعة PowerShell:\n"
+            "  • لا تستخدم Get-ComputerInfo — استخدم get_system_info() بدلاً منها\n"
+            "  • لا تستخدم Get-Counter — استخدم Get-WmiObject\n\n"
+            "استعادة الأخطاء:\n"
+            "  • إذا فشلت الأداة → جرب نهجاً مختلفاً تماماً\n"
+            "  • إذا لم يُعثر على ملف → استخدم search_files أو run_powershell للبحث\n"
+            "  • لا تسأل المستخدم أبداً 'أين الملف؟' — ابحث بنفسك أولاً\n\n"
+            "تغيير الموضوع:\n"
+            "  • إذا غيّر المستخدم طلبه → المهمة القديمة ملغاة. نفذ الطلب الجديد فقط."
         )
     )
 
@@ -481,18 +579,32 @@ def worker_node(state: AgentState) -> dict:
             else:
                 raw_result = tool_fn.invoke(tool_args)
 
-                # ── Case A: Destructive PowerShell command ────────────────
-                if isinstance(raw_result, str) and raw_result.startswith(HITL_FLAG):
-                    risky_cmd = raw_result[len(HITL_FLAG):].strip()
+                # ── Case A: Destructive command detected ─────────────────
+                _hitl_sentinels = ("HITL_APPROVAL_REQUIRED:", "__HITL_REQUIRED__")
+                _is_hitl = isinstance(raw_result, str) and any(
+                    raw_result.startswith(s) or s in raw_result for s in _hitl_sentinels
+                )
+
+                if _is_hitl:
+                    # Extract the risky command from the sentinel
+                    risky_cmd = str(raw_result)
+                    for s in _hitl_sentinels:
+                        risky_cmd = risky_cmd.replace(s, "")
+                    # Try to extract "Command:" line if present
+                    for line in raw_result.splitlines():
+                        if line.strip().startswith("Command:"):
+                            risky_cmd = line.split("Command:", 1)[1].strip()
+                            break
+                    risky_cmd = risky_cmd.strip()
 
                     user_choice: str = interrupt(
                         {
                             "type":    "destructive_command",
                             "command": risky_cmd,
                             "message": (
-                                f"⚠️ The agent wants to run a potentially destructive command:\n"
+                                f"⚠️ الوكيل يريد تنفيذ أمر قد يكون خطيراً:\n"
                                 f"```powershell\n{risky_cmd}\n```\n"
-                                "Click **Approve** to allow, or **Deny** to block."
+                                "اضغط **موافق** للسماح، أو **رفض** للمنع."
                             ),
                         }
                     )
@@ -500,7 +612,7 @@ def worker_node(state: AgentState) -> dict:
                     if user_choice == "approve":
                         try:
                             proc = subprocess.run(
-                                ["powershell", "-NonInteractive", "-Command", risky_cmd],
+                                ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", risky_cmd],
                                 capture_output=True,
                                 text=True,
                                 timeout=PS_TIMEOUT,
@@ -518,13 +630,13 @@ def worker_node(state: AgentState) -> dict:
                         result = f"🚫 Command denied by user: `{risky_cmd}` — skipping this step."
 
                 # ── Case B: CAPTCHA detected ──────────────────────────────
-                elif raw_result == CAPTCHA_FLAG:
+                elif isinstance(raw_result, str) and "CAPTCHA_DETECTED" in raw_result:
                     interrupt(
                         {
                             "type": "captcha",
                             "message": (
-                                "🔒 A CAPTCHA was detected. The browser window is open on your screen. "
-                                "Please solve the CAPTCHA manually, then click **Done** to resume."
+                                "🔒 تم اكتشاف CAPTCHA. نافذة المتصفح مفتوحة على شاشتك. "
+                                "يرجى حل الـ CAPTCHA يدوياً، ثم اضغط **تم** للاستئناف."
                             ),
                         }
                     )

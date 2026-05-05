@@ -4,6 +4,8 @@ Central configuration loader.
 Reads .env once, exposes typed constants the rest of the codebase imports.
 Every module in agent/, tools/, core/ should import from here — never call
 os.getenv directly. This keeps the surface area for misconfiguration tiny.
+
+Supported providers: google, anthropic, openai, deepseek
 """
 
 from __future__ import annotations
@@ -35,27 +37,38 @@ def _get_int(name: str, default: int) -> int:
 
 
 # ── Provider selection ──────────────────────────────────────────────────────
-ProviderName = Literal["anthropic", "google"]
+ProviderName = Literal["anthropic", "google", "openai", "deepseek"]
 MODEL_PROVIDER: ProviderName = _get("MODEL_PROVIDER", "google").lower()  # type: ignore
-if MODEL_PROVIDER not in ("anthropic", "google"):
+if MODEL_PROVIDER not in ("anthropic", "google", "openai", "deepseek"):
     raise ValueError(
-        f"MODEL_PROVIDER must be 'anthropic' or 'google', got '{MODEL_PROVIDER}'"
+        f"MODEL_PROVIDER must be 'anthropic', 'google', 'openai', or 'deepseek', got '{MODEL_PROVIDER}'"
     )
 
 # ── Anthropic ────────────────────────────────────────────────────────────────
 ANTHROPIC_API_KEY: str = _get("ANTHROPIC_API_KEY")
-ANTHROPIC_AGENT_MODEL: str = _get("ANTHROPIC_AGENT_MODEL", "claude-3-7-sonnet-20250219")
+ANTHROPIC_AGENT_MODEL: str = _get("ANTHROPIC_AGENT_MODEL", "claude-sonnet-4-20250514")
 ANTHROPIC_SUMMARIZER_MODEL: str = _get(
     "ANTHROPIC_SUMMARIZER_MODEL", "claude-haiku-4-5-20251001"
 )
 
 # ── Google Gemini ────────────────────────────────────────────────────────────
 GOOGLE_API_KEY: str = _get("GOOGLE_API_KEY")
-GOOGLE_AGENT_MODEL: str = _get("GOOGLE_AGENT_MODEL", "gemini-2.0-flash")
+GOOGLE_AGENT_MODEL: str = _get("GOOGLE_AGENT_MODEL", "gemini-2.5-flash")
 GOOGLE_SUMMARIZER_MODEL: str = _get("GOOGLE_SUMMARIZER_MODEL", "gemini-2.0-flash")
 
+# ── OpenAI (ChatGPT) ────────────────────────────────────────────────────────
+OPENAI_API_KEY: str = _get("OPENAI_API_KEY")
+OPENAI_AGENT_MODEL: str = _get("OPENAI_AGENT_MODEL", "gpt-4o")
+OPENAI_SUMMARIZER_MODEL: str = _get("OPENAI_SUMMARIZER_MODEL", "gpt-4o-mini")
+
+# ── DeepSeek ─────────────────────────────────────────────────────────────────
+DEEPSEEK_API_KEY: str = _get("DEEPSEEK_API_KEY")
+DEEPSEEK_AGENT_MODEL: str = _get("DEEPSEEK_AGENT_MODEL", "deepseek-chat")
+DEEPSEEK_SUMMARIZER_MODEL: str = _get("DEEPSEEK_SUMMARIZER_MODEL", "deepseek-chat")
+DEEPSEEK_BASE_URL: str = _get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+
 # ── Agent behaviour ─────────────────────────────────────────────────────────
-MAX_ITERATIONS: int = _get_int("MAX_ITERATIONS", 20)
+MAX_ITERATIONS: int = _get_int("MAX_ITERATIONS", 50)
 MAX_HISTORY: int = _get_int("MAX_HISTORY", 15)
 PS_TIMEOUT: int = _get_int("PS_TIMEOUT", 120)
 
@@ -65,13 +78,10 @@ DESKTOP_DIR: Path = Path(_get("DESKTOP_DIR", str(Path.home() / "Desktop")))
 DOWNLOADS_DIR: Path = Path(_get("DOWNLOADS_DIR", str(Path.home() / "Downloads")))
 
 # ── Browser ─────────────────────────────────────────────────────────────────
-# Headful by default — the user wants to SEE the agent driving the browser.
 BROWSER_HEADLESS: bool = _get("BROWSER_HEADLESS", "false").lower() == "true"
 BROWSER_USER_DATA_DIR: Path = ROOT_DIR / ".browser_profile"
 
 # ── Safety / HITL ────────────────────────────────────────────────────────────
-# Patterns that force human approval before execution. Defense-in-depth: even
-# if the LLM proposes one of these, the worker pauses and asks the user.
 DESTRUCTIVE_PATTERNS: tuple[str, ...] = (
     "Remove-Item -Recurse",
     "rm -rf",
@@ -82,7 +92,7 @@ DESTRUCTIVE_PATTERNS: tuple[str, ...] = (
     "Restart-Computer",
     "Stop-Computer",
     "Set-ExecutionPolicy",
-    "Invoke-WebRequest -OutFile",  # downloads, not destructive but worth confirming
+    "Invoke-WebRequest -OutFile",
     "Add-LocalGroupMember",
     "New-LocalUser",
     "reg delete",
@@ -90,20 +100,56 @@ DESTRUCTIVE_PATTERNS: tuple[str, ...] = (
     "cipher /w",
 )
 
+# ── All available providers (for UI model selector) ─────────────────────────
+AVAILABLE_PROVIDERS: dict[str, dict] = {
+    "google": {
+        "label": "Google Gemini",
+        "icon": "🟦",
+        "key_var": "GOOGLE_API_KEY",
+        "models": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
+    },
+    "anthropic": {
+        "label": "Anthropic Claude",
+        "icon": "🟠",
+        "key_var": "ANTHROPIC_API_KEY",
+        "models": ["claude-sonnet-4-20250514", "claude-3-5-sonnet-20241022", "claude-haiku-4-5-20251001"],
+    },
+    "openai": {
+        "label": "OpenAI ChatGPT",
+        "icon": "🟢",
+        "key_var": "OPENAI_API_KEY",
+        "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
+    },
+    "deepseek": {
+        "label": "DeepSeek",
+        "icon": "🔵",
+        "key_var": "DEEPSEEK_API_KEY",
+        "models": ["deepseek-chat", "deepseek-reasoner"],
+    },
+}
+
 
 def active_provider_key() -> str:
     """Return the API key for the currently selected provider."""
-    if MODEL_PROVIDER == "anthropic":
-        return ANTHROPIC_API_KEY
-    return GOOGLE_API_KEY
+    key_map = {
+        "anthropic": ANTHROPIC_API_KEY,
+        "google": GOOGLE_API_KEY,
+        "openai": OPENAI_API_KEY,
+        "deepseek": DEEPSEEK_API_KEY,
+    }
+    return key_map.get(MODEL_PROVIDER, "")
 
 
 def assert_keys_present() -> None:
     """Fail fast at startup if the active provider has no key."""
     if not active_provider_key():
-        provider_var = (
-            "ANTHROPIC_API_KEY" if MODEL_PROVIDER == "anthropic" else "GOOGLE_API_KEY"
-        )
+        key_var_map = {
+            "anthropic": "ANTHROPIC_API_KEY",
+            "google": "GOOGLE_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "deepseek": "DEEPSEEK_API_KEY",
+        }
+        provider_var = key_var_map.get(MODEL_PROVIDER, "UNKNOWN_KEY")
         raise RuntimeError(
             f"MODEL_PROVIDER='{MODEL_PROVIDER}' but {provider_var} is empty. "
             f"Edit {ENV_PATH} and set it."

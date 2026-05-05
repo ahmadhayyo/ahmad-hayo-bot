@@ -1,10 +1,11 @@
 # ============================================================
-# Ultimate Secure Local OS Executive Agent — Dependencies
+# HAYO AI Agent — Dependencies
 # ============================================================
 
 # Core LLM & Agent Framework
 langchain-anthropic>=0.3.0
-langchain-google-genai>=2.0.0   # Google Gemini support
+langchain-google-genai>=2.0.0
+langchain-openai>=0.3.0         # OpenAI (ChatGPT) & DeepSeek support
 langchain-core>=0.3.0
 langgraph>=0.2.60
 
@@ -26,7 +27,7 @@ aiofiles>=23.2.1
 
 # Web Search & Download
 duckduckgo-search>=6.0.0
-yt-dlp>=2024.1.0          # Download from YouTube, SoundCloud, and 1000+ sites
+yt-dlp>=2024.1.0
 
 # Desktop GUI Automation (open apps, click, type, screenshot)
 pyautogui>=0.9.54
@@ -35,13 +36,16 @@ Pillow>=10.0.0
 
 # Persistent Memory (SQLite checkpointing)
 langgraph-checkpoint-sqlite>=2.0.0
-aiosqlite>=0.20.0          # Required for AsyncSqliteSaver (async Chainlit streaming)
+aiosqlite>=0.20.0
 
-# Process & system info (used by app_tools)
+# Process & system info
 psutil>=6.0.0
+
+# Windows-specific (clipboard, audio, notifications)
+pywin32>=306; sys_platform == "win32"
 
 # Pretty CLI logging
 rich>=13.7.0
 
-# Pydantic (LangChain peer dep — pin minimum)
+# Pydantic (LangChain peer dep)
 pydantic>=2.7.0
