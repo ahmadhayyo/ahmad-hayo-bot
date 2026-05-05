@@ -44,6 +44,10 @@ def assert_keys_present() -> None:
         raise RuntimeError(
             "MODEL_PROVIDER='google' but GOOGLE_API_KEY is empty in .env"
         )
+    if MODEL_PROVIDER == "groq" and not os.getenv("GROQ_API_KEY"):
+        raise RuntimeError(
+            "MODEL_PROVIDER='groq' but GROQ_API_KEY is empty in .env"
+        )
 
 
 def _print_response(state: dict) -> None:
