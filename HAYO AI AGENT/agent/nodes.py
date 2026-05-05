@@ -117,11 +117,12 @@ def _build_llm(role: Literal["main", "summarizer"], provider: str | None = None)
     elif prov == "openai":
         from langchain_openai import ChatOpenAI
 
+        api_key = os.getenv("OPENAI_API_KEY") or "sk-placeholder"
         if role == "main":
             model_name = os.getenv("OPENAI_AGENT_MODEL", "gpt-4o")
             return ChatOpenAI(
                 model=model_name,
-                api_key=os.getenv("OPENAI_API_KEY"),
+                api_key=api_key,
                 temperature=0.0,
                 streaming=True,
             )
@@ -129,7 +130,7 @@ def _build_llm(role: Literal["main", "summarizer"], provider: str | None = None)
             model_name = os.getenv("OPENAI_SUMMARIZER_MODEL", "gpt-4o-mini")
             return ChatOpenAI(
                 model=model_name,
-                api_key=os.getenv("OPENAI_API_KEY"),
+                api_key=api_key,
                 temperature=0.0,
                 max_tokens=2_048,
             )
@@ -138,11 +139,12 @@ def _build_llm(role: Literal["main", "summarizer"], provider: str | None = None)
         from langchain_openai import ChatOpenAI
 
         base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+        api_key = os.getenv("DEEPSEEK_API_KEY") or "sk-placeholder"
         if role == "main":
             model_name = os.getenv("DEEPSEEK_AGENT_MODEL", "deepseek-chat")
             return ChatOpenAI(
                 model=model_name,
-                api_key=os.getenv("DEEPSEEK_API_KEY"),
+                api_key=api_key,
                 base_url=base_url,
                 temperature=0.0,
                 streaming=True,
@@ -151,7 +153,7 @@ def _build_llm(role: Literal["main", "summarizer"], provider: str | None = None)
             model_name = os.getenv("DEEPSEEK_SUMMARIZER_MODEL", "deepseek-chat")
             return ChatOpenAI(
                 model=model_name,
-                api_key=os.getenv("DEEPSEEK_API_KEY"),
+                api_key=api_key,
                 base_url=base_url,
                 temperature=0.0,
                 max_tokens=2_048,
