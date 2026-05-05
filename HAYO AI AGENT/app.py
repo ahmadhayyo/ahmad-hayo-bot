@@ -15,13 +15,14 @@ from __future__ import annotations
 import json
 import os
 import uuid
-import chainlit as cl
-from dotenv import load_dotenv
-from langchain_core.messages import AIMessageChunk, HumanMessage
-from langgraph.types import Command
-from agent.workflow import compile_graph
 
-load_dotenv()
+from dotenv import load_dotenv
+load_dotenv()                    # must run BEFORE agent imports read env vars
+
+import chainlit as cl            # noqa: E402
+from langchain_core.messages import AIMessageChunk, HumanMessage  # noqa: E402
+from langgraph.types import Command  # noqa: E402
+from agent.workflow import compile_graph  # noqa: E402
 
 # ── Provider configuration ────────────────────────────────────────────────────
 _PROVIDER = os.getenv("MODEL_PROVIDER", "google").lower().strip()
