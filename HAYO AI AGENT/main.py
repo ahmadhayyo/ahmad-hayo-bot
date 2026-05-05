@@ -96,7 +96,7 @@ async def amain() -> int:
         )
     )
 
-    graph = await compile_graph()
+    graph = compile_graph()
     thread_id = str(uuid.uuid4())
 
     if args.once:

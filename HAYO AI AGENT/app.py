@@ -12,7 +12,6 @@ Features:
   • Screenshot integration for desktop capture.
 """
 from __future__ import annotations
-import asyncio
 import json
 import os
 import uuid
@@ -72,13 +71,14 @@ _CONTINUE_KEYWORDS = {
     "أكمل من حيث توقفت", "استمر من حيث توقفت",
 }
 
-# ── Global graph variable (initialized at startup) ────────────────────────────
-# compile_graph() is SYNCHRONOUS — never use 'await' on it.
-GRAPH = compile_graph()
+# ── Global graph variable ─────────────────────────────────────────────────────
+# Lazy init: compiled on first use inside the event loop so that
+# AsyncSqliteSaver can capture the running loop.
+GRAPH = None
 
 
 def _get_graph():
-    """Return the compiled graph (already initialized at module load)."""
+    """Return the compiled graph, creating it on first call."""
     global GRAPH
     if GRAPH is None:
         GRAPH = compile_graph()
@@ -150,36 +150,28 @@ async def _run_graph(input_or_command, config: dict) -> None:
         "reviewer": ("🔍", "يراجع... | Reviewing..."),
     }
 
-    try:
-        async for event in GRAPH.astream_events(
-            input_or_command, config=config, version="v2"
-        ):
-            kind: str = event.get("event", "")
-            name: str = event.get("name", "")
+    current_node: str | None = None
 
-            if kind == "on_chain_start" and name in NODE_LABELS:
+    try:
+        async for msg_chunk, metadata in GRAPH.astream(
+            input_or_command, config=config, stream_mode="messages"
+        ):
+            node = metadata.get("langgraph_node", "")
+
+            # Show / switch step indicator when the active node changes
+            if node and node != current_node and node in NODE_LABELS:
                 if active_step:
                     await active_step.__aexit__(None, None, None)
-                emoji, label = NODE_LABELS[name]
+                emoji, label = NODE_LABELS[node]
                 active_step = cl.Step(name=f"{emoji} {label}", type="run")
                 await active_step.__aenter__()
+                current_node = node
 
-            elif kind == "on_chain_end" and active_step:
-                await active_step.__aexit__(None, None, None)
-                active_step = None
-
-            elif kind == "on_tool_start":
-                tool_name = name or "tool"
-                tool_input = str(event.get("data", {}).get("input", ""))
-                async with cl.Step(name=f"🔧 {tool_name}", type="tool") as ts:
-                    ts.input = tool_input[:500]
-
-            elif kind == "on_chat_model_stream":
-                chunk = event.get("data", {}).get("chunk")
-                if chunk:
-                    text = _extract_text_chunk(chunk)
-                    if text:
-                        await response_msg.stream_token(text)
+            # Stream text tokens
+            if hasattr(msg_chunk, "content"):
+                text = _extract_text_chunk(msg_chunk)
+                if text:
+                    await response_msg.stream_token(text)
 
     except Exception as exc:
         await cl.Message(
@@ -198,7 +190,7 @@ async def _handle_hitl_loop(config: dict) -> None:
         GRAPH = _get_graph()
 
     while True:
-        state = GRAPH.get_state(config)
+        state = await GRAPH.aget_state(config)
         if not state.next:
             break
         all_interrupts: list = []
@@ -291,7 +283,7 @@ async def on_chat_start() -> None:
 
     if last_thread:
         try:
-            state = GRAPH.get_state({"configurable": {"thread_id": last_thread}})
+            state = await GRAPH.aget_state({"configurable": {"thread_id": last_thread}})
             has_work = bool(state and state.values.get("messages"))
         except Exception:
             has_work = False
@@ -440,13 +432,13 @@ async def on_message(message: cl.Message) -> None:
     # ── Continue / Resume detection ───────────────────────────────────────────
     if _is_continue_request(user_text):
         try:
-            state = GRAPH.get_state(config)
+            state = await GRAPH.aget_state(config)
             if state and state.next:
                 await cl.Message(content="▶️ جارٍ الاستئناف من حيث توقفت…").send()
                 await _run_graph(Command(resume="continue"), config)
                 await _handle_hitl_loop(config)
                 return
-            elif state and state.values.get("plan") and state.values.get("iteration_count", 0) > 0:
+            elif state and state.values.get("plan") and state.values.get("iteration_count", 0) > 0:  # noqa: E501
                 await cl.Message(content="🔁 جارٍ متابعة المهمة السابقة…").send()
                 inputs = {
                     "messages": [
@@ -497,7 +489,7 @@ async def on_message(message: cl.Message) -> None:
 
     # ── Post-run error summary ────────────────────────────────────────────────
     try:
-        final_state = GRAPH.get_state(config)
+        final_state = await GRAPH.aget_state(config)
         errors = final_state.values.get("error_logs", [])
         messages_list = final_state.values.get("messages", [])
         last_verdict = ""
