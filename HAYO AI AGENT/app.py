@@ -15,9 +15,10 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from pathlib import Path
 
 from dotenv import load_dotenv
-load_dotenv()                    # must run BEFORE agent imports read env vars
+load_dotenv(Path(__file__).parent / ".env")  # must run BEFORE agent imports read env vars
 
 import chainlit as cl            # noqa: E402
 from langchain_core.messages import AIMessageChunk, HumanMessage  # noqa: E402
