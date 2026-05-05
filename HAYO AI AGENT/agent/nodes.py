@@ -40,6 +40,7 @@ Set MODEL_PROVIDER=google    in .env to use Google Gemini.
 Set MODEL_PROVIDER=anthropic in .env to use Anthropic Claude.
 Set MODEL_PROVIDER=openai    in .env to use OpenAI ChatGPT.
 Set MODEL_PROVIDER=deepseek  in .env to use DeepSeek.
+Set MODEL_PROVIDER=groq      in .env to use Groq.
 
 Provider can also be switched at runtime via the UI model selector.
 """
@@ -159,10 +160,31 @@ def _build_llm(role: Literal["main", "summarizer"], provider: str | None = None)
                 max_tokens=2_048,
             )
 
+    elif prov == "groq":
+        from langchain_groq import ChatGroq
+
+        api_key = os.getenv("GROQ_API_KEY") or ""
+        if role == "main":
+            model_name = os.getenv("GROQ_AGENT_MODEL", "llama-3.3-70b-versatile")
+            return ChatGroq(
+                model=model_name,
+                api_key=api_key,
+                temperature=0.0,
+                streaming=True,
+            )
+        else:
+            model_name = os.getenv("GROQ_SUMMARIZER_MODEL", "llama-3.1-8b-instant")
+            return ChatGroq(
+                model=model_name,
+                api_key=api_key,
+                temperature=0.0,
+                max_tokens=2_048,
+            )
+
     else:
         raise ValueError(
             f"Unknown MODEL_PROVIDER='{prov}'. "
-            "Set MODEL_PROVIDER to 'google', 'anthropic', 'openai', or 'deepseek'."
+            "Set MODEL_PROVIDER to 'google', 'anthropic', 'openai', 'deepseek', or 'groq'."
         )
 
 
