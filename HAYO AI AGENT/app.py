@@ -51,6 +51,12 @@ _PROVIDERS = {
         "model_var": "DEEPSEEK_AGENT_MODEL",
         "default_model": "deepseek-chat",
     },
+    "groq": {
+        "label": "Groq",
+        "icon": "🟣",
+        "model_var": "GROQ_AGENT_MODEL",
+        "default_model": "llama-3.3-70b-versatile",
+    },
 }
 
 
@@ -312,6 +318,7 @@ async def on_chat_start() -> None:
             "anthropic": "ANTHROPIC_API_KEY",
             "openai": "OPENAI_API_KEY",
             "deepseek": "DEEPSEEK_API_KEY",
+            "groq": "GROQ_API_KEY",
         }.get(key, "")
         has_key = bool(os.getenv(api_key_var, "").strip())
         status = "✅" if has_key else "❌ (مفتاح API غير موجود)"
@@ -337,7 +344,7 @@ async def on_chat_start() -> None:
             "---\n\n"
             "### النماذج المتاحة:\n"
             f"{models_display}\n\n"
-            "💡 **لتغيير النموذج**: اكتب `/model google` أو `/model anthropic` أو `/model openai` أو `/model deepseek`\n\n"
+            "💡 **لتغيير النموذج**: اكتب `/model google` أو `/model anthropic` أو `/model openai` أو `/model deepseek` أو `/model groq`\n\n"
             "---\n\n"
             "**أخبرني بما تريد — سأنفذ كل شيء بدقة.**"
         )
@@ -367,6 +374,7 @@ async def on_message(message: cl.Message) -> None:
                     "anthropic": "ANTHROPIC_API_KEY",
                     "openai": "OPENAI_API_KEY",
                     "deepseek": "DEEPSEEK_API_KEY",
+                    "groq": "GROQ_API_KEY",
                 }
                 api_key = os.getenv(key_vars.get(new_provider, ""), "").strip()
                 if not api_key:
@@ -412,7 +420,7 @@ async def on_message(message: cl.Message) -> None:
             await cl.Message(
                 content=(
                     f"النموذج الحالي: {_get_model_display(current)}\n\n"
-                    "للتغيير: `/model google` | `/model anthropic` | `/model openai` | `/model deepseek`"
+                    "للتغيير: `/model google` | `/model anthropic` | `/model openai` | `/model deepseek` | `/model groq`"
                 )
             ).send()
         return
