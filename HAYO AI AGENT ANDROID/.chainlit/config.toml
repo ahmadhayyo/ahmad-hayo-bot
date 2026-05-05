@@ -1,0 +1,7 @@
+[project]
+enable_telemetry = false
+
+[UI]
+name = "HAYO AI Agent"
+description = "وكيل ذكي خارق القدرات لنظام Android"
+default_theme = "dark"
