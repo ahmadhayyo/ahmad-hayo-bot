@@ -414,7 +414,8 @@ async def on_chat_start() -> None:
             "---\n\n"
             "### القدرات:\n"
             "🖥️ النظام · 📁 الملفات · 🌐 المتصفح · 🖱️ سطح المكتب · 📋 الحافظة\n"
-            "🌍 الشبكة · 🔊 الصوت · 📊 Office · 🎬 تحويل ملفات · 🎵 تحميل أغاني YouTube\n\n"
+            "🌍 الشبكة · 🔊 الصوت · 📊 Office · 🎬 تحويل ملفات · 🎵 تحميل أغاني YouTube\n"
+            "🔗 GitHub · 📁 Google Drive · 🖼️ تحليل الصور\n\n"
             "---\n\n"
             "### النماذج المتاحة:\n"
             f"{models_display}\n\n"
@@ -763,6 +764,7 @@ async def on_message(message: cl.Message) -> None:
 
     # ── File upload processing ────────────────────────────────────────────────
     file_context = ""
+    image_parts = []  # For multimodal image analysis
     if message.elements:
         for element in message.elements:
             path = getattr(element, "path", None)
@@ -770,8 +772,21 @@ async def on_message(message: cl.Message) -> None:
             mime = getattr(element, "mime", "")
 
             if path:
-                # For non-text files, just note the path
-                if mime and not mime.startswith("text/") and "json" not in mime and "xml" not in mime:
+                # Image files → send as multimodal content for vision analysis
+                if mime and mime.startswith("image/"):
+                    try:
+                        import base64
+                        with open(path, "rb") as img_file:
+                            img_b64 = base64.b64encode(img_file.read()).decode("utf-8")
+                        image_parts.append({
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{mime};base64,{img_b64}"},
+                        })
+                        file_context += f"\n\n🖼️ **صورة مرفقة: {name}** — (تم إرسالها للتحليل البصري)"
+                    except Exception as exc:
+                        file_context += f"\n\n📎 **صورة مرفقة: {name}** — المسار: `{path}` (تعذر التحليل: {exc})"
+                # Non-text, non-image files → just note the path
+                elif mime and not mime.startswith("text/") and "json" not in mime and "xml" not in mime:
                     file_context += f"\n\n📎 **ملف مرفق: {name}** — المسار: `{path}` (نوع: {mime})"
                 else:
                     try:
@@ -783,8 +798,14 @@ async def on_message(message: cl.Message) -> None:
 
     full_text = user_text + file_context
 
+    # Build message content — multimodal if images are attached
+    if image_parts:
+        msg_content = [{"type": "text", "text": full_text}] + image_parts
+    else:
+        msg_content = full_text
+
     # ── Initial graph run ─────────────────────────────────────────────────────
-    inputs = {"messages": [HumanMessage(content=full_text)]}
+    inputs = {"messages": [HumanMessage(content=msg_content)]}
     await _run_graph(inputs, config)
     await _handle_hitl_loop(config)
 
