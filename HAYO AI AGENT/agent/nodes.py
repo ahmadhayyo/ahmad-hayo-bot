@@ -62,8 +62,8 @@ from core.deduplication import is_duplicate_tool_call, is_duplicate_message, rec
 from tools.registry import ALL_TOOLS, TOOLS_BY_NAME
 
 # ── Environment ───────────────────────────────────────────────────────────────
-MAX_HISTORY:    int = int(os.getenv("MAX_HISTORY",    "15"))
-MAX_ITERATIONS: int = int(os.getenv("MAX_ITERATIONS", "50"))
+MAX_HISTORY:    int = int(os.getenv("MAX_HISTORY",    "300"))  # Increased from 15 for longer conversations
+MAX_ITERATIONS: int = int(os.getenv("MAX_ITERATIONS", "500"))  # Increased from 50 to allow unlimited execution
 PS_TIMEOUT:     int = int(os.getenv("PS_TIMEOUT",     "30"))
 
 _PROVIDER = os.getenv("MODEL_PROVIDER", "google").lower().strip()
@@ -197,6 +197,17 @@ def switch_provider(provider: str) -> None:
     _main_llm = _build_llm("main", _PROVIDER)
     _fast_llm = _build_llm("summarizer", _PROVIDER)
     _llm_with_tools = _main_llm.bind_tools(ALL_TOOLS)
+
+
+def _ensure_provider_match() -> None:
+    """Rebuild LLM if provider changed in environment."""
+    global _main_llm, _fast_llm, _llm_with_tools, _PROVIDER
+    current_provider = os.getenv("MODEL_PROVIDER", "google").lower().strip()
+    if current_provider != _PROVIDER:
+        _PROVIDER = current_provider
+        _main_llm = _build_llm("main", _PROVIDER)
+        _fast_llm = _build_llm("summarizer", _PROVIDER)
+        _llm_with_tools = _main_llm.bind_tools(ALL_TOOLS)
 
 
 # ── LLM instances (built once at import time) ─────────────────────────────────
@@ -445,6 +456,7 @@ def planner_node(state: AgentState) -> dict:
       require any tool, the planner responds directly and sets plan = ["CONVERSATIONAL_ONLY"].
       WorkerNode skips tool execution and ReviewerNode immediately marks TASK_COMPLETE.
     """
+    _ensure_provider_match()  # Ensure correct LLM provider is being used
     messages = _summarize_old_messages(state.get("messages", []))
     system   = SystemMessage(content=_PLANNER_SYSTEM)
     response = _main_llm.invoke([system] + messages)
@@ -545,6 +557,7 @@ def worker_node(state: AgentState) -> dict:
       • browser_automation returns CAPTCHA_FLAG → interrupt() pauses graph.
         On resume (any value):    execution continues (user solved CAPTCHA).
     """
+    _ensure_provider_match()  # Ensure correct LLM provider is being used
     messages   = _summarize_old_messages(state.get("messages", []))
     iteration  = state.get("iteration_count", 0)
     error_logs = list(state.get("error_logs", []))
@@ -901,6 +914,7 @@ def reviewer_node(state: AgentState) -> dict:
     """
     Evaluates completed work and decides: TASK_COMPLETE, CONTINUE, or FAILED.
     """
+    _ensure_provider_match()  # Ensure correct LLM provider is being used
     messages   = _summarize_old_messages(state.get("messages", []))
     error_logs = list(state.get("error_logs", []))
     plan       = state.get("plan", [])
