@@ -61,8 +61,8 @@ def is_duplicate_tool_call(
 def is_duplicate_message(
     new_message: BaseMessage,
     recent_messages: list[BaseMessage],
-    min_length: int = 50,
-    similarity_threshold: float = 0.85,
+    min_length: int = 10,
+    similarity_threshold: float = 0.70,
 ) -> bool:
     """
     Check if this message is identical or very similar to a recent message.
