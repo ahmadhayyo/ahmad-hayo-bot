@@ -77,8 +77,9 @@ echo.
 echo  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 echo.
 
+:: --headless prevents chainlit from auto-opening browser; we open one window ourselves
 start "" http://localhost:8000
-chainlit run app.py --port 8000
+chainlit run app.py --port 8000 --headless
 
 echo.
 echo  [!] Server stopped.

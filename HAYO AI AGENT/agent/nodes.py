@@ -791,9 +791,25 @@ def worker_node(state: AgentState) -> dict:
 
     if hasattr(llm_response, "tool_calls") and llm_response.tool_calls:
         for tc in llm_response.tool_calls:
-            tool_name = tc["name"]
-            tool_args = tc["args"]
-            tool_id   = tc["id"]
+            # Defensive: extract fields safely — DeepSeek may emit tool_calls
+            # with unexpected shapes
+            try:
+                if isinstance(tc, dict):
+                    tool_name = tc.get("name", "")
+                    tool_args = tc.get("args", {}) or {}
+                    tool_id   = tc.get("id", "")
+                else:
+                    tool_name = getattr(tc, "name", "")
+                    tool_args = getattr(tc, "args", {}) or {}
+                    tool_id   = getattr(tc, "id", "")
+            except Exception as exc:
+                # Malformed tool_call — skip but log
+                error_logs.append(f"[iter {iteration+1}] Malformed tool_call: {exc}")
+                continue
+
+            # Always ensure tool_id exists so we can produce a ToolMessage
+            if not tool_id:
+                tool_id = f"missing_id_{uuid.uuid4()}"
 
             # ── Check for duplicate tool call ────────────────────────────────
             if is_duplicate_tool_call(tool_name, tool_args, tool_call_history, recent_count=2):
@@ -808,7 +824,11 @@ def worker_node(state: AgentState) -> dict:
             if not tool_fn:
                 result = f"❌ ERROR: Tool '{tool_name}' is not registered. Available tools: {list(TOOL_MAP.keys())}"
             else:
-                raw_result = tool_fn.invoke(tool_args)
+                try:
+                    raw_result = tool_fn.invoke(tool_args)
+                except Exception as exc:
+                    raw_result = f"❌ ERROR running {tool_name}: {type(exc).__name__}: {exc}"
+                    error_logs.append(f"[task:{task_id}][{tool_name}] {raw_result[:300]}")
 
                 # ── Case A: Destructive command detected ─────────────────
                 _hitl_sentinels = ("HITL_APPROVAL_REQUIRED:", "__HITL_REQUIRED__")
@@ -911,6 +931,10 @@ def worker_node(state: AgentState) -> dict:
         last_tc = llm_response.tool_calls[-1]
         last_tool_name = last_tc.get("name", "")
         last_tool_args = last_tc.get("args", {})
+
+    # Final defensive sanitization — guarantees no invalid tool sequences
+    # reach the reducer, even if something above missed a ToolMessage.
+    new_messages = _sanitize_messages(new_messages)
 
     return {
         "messages":                new_messages,
