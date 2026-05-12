@@ -224,6 +224,36 @@ _llm_with_tools = _main_llm.bind_tools(ALL_TOOLS)
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _sanitize_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
+    """
+    Remove any ToolMessage whose tool_call_id has no matching AIMessage with
+    tool_calls in the sequence. This prevents the API error:
+      "Messages with role 'tool' must be a response to a preceding message with 'tool_calls'"
+
+    This happens when _summarize_old_messages cuts the history at a point where
+    an AIMessage(tool_calls=[...]) ends up summarized but its ToolMessage(s) remain.
+    """
+    # Collect all tool_call ids that are declared in AIMessages
+    valid_ids: set[str] = set()
+    for msg in messages:
+        if isinstance(msg, AIMessage):
+            for tc in getattr(msg, "tool_calls", []) or []:
+                tid = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                if tid:
+                    valid_ids.add(tid)
+
+    # Keep every message, but drop ToolMessages with no matching call
+    sanitized = []
+    for msg in messages:
+        if isinstance(msg, ToolMessage):
+            if msg.tool_call_id in valid_ids:
+                sanitized.append(msg)
+            # else: silently drop the orphaned ToolMessage
+        else:
+            sanitized.append(msg)
+    return sanitized
+
+
 def _summarize_old_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
     """
     If message history exceeds MAX_HISTORY, summarise the oldest entries with
@@ -233,9 +263,10 @@ def _summarize_old_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
     - Keep last 20 messages (not 10) for richer context
     - Only summarize up to the 30 messages before those (avoid huge summarization)
     - Filter out previous summaries to avoid redundancy
+    - Always sanitize the result to remove orphaned ToolMessages
     """
     if len(messages) <= MAX_HISTORY:
-        return messages
+        return _sanitize_messages(messages)
 
     keep_recent  = min(20, len(messages) // 2)  # Keep more recent messages
     old_messages = messages[:-keep_recent]
@@ -249,6 +280,9 @@ def _summarize_old_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
         m for m in messages_to_summarize
         if not (isinstance(m, AIMessage) and "Context summary" in str(m.content))
     ]
+
+    # Sanitize messages_to_summarize too before sending to LLM
+    messages_to_summarize = _sanitize_messages(messages_to_summarize)
 
     summary_response = _fast_llm.invoke(
         [
@@ -266,12 +300,15 @@ def _summarize_old_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
     )
 
     summary_msg = AIMessage(
-        content=f"📋 [Context summary — earlier steps]\n\n{summary_response.content}"
+        content=f"[Context summary — earlier steps]\n\n{summary_response.content}"
     )
 
     # Return: filtered old messages (excluding the ones we summarized) + summary + recent
     remaining_old = old_messages[:-len(messages_to_summarize)] if messages_to_summarize else []
-    return remaining_old + [summary_msg] + recent
+    combined = remaining_old + [summary_msg] + recent
+
+    # Always sanitize to drop any orphaned ToolMessages that lost their AIMessage pair
+    return _sanitize_messages(combined)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
