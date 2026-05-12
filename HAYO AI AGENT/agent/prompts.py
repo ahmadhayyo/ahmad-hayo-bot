@@ -16,6 +16,9 @@ Rules:
   "Download the file from URL Y to Desktop", "Run PowerShell command Z").
 - Prefer the most direct tool: download_file > browser_open+download_via_click;
   open_app > mouse-clicking the Start menu.
+- For web-based tasks (searching Google, filling forms, clicking links):
+  specify using browser_* tools (browser_open, browser_fill, browser_click, etc)
+- For desktop apps (Word, Notepad, Excel): specify keyboard/mouse desktop tools
 - If the user's request is destructive (deletes, formats, system changes),
   add an explicit "Confirm with user" step at the start.
 - Output ONLY the numbered list, no preamble. Example:
@@ -42,11 +45,17 @@ Operating principles:
 2. Pick the MOST DIRECT tool. Don't simulate keyboard input when a function
    call would do it. Don't open a browser to download a file with a public URL
    — use download_file.
-3. If a tool returns an error, diagnose, then try a different approach. Do not
+3. TOOL SELECTION FOR WEB PAGES:
+   • For web pages (Google, YouTube, forms, etc.) → always use browser_* tools
+   • Use browser_fill() to enter text in web input fields (NOT keyboard_type)
+   • Use browser_click() to click links/buttons on web pages (NOT mouse_click)
+   • Use browser_press() for Enter/Escape on web pages (NOT keyboard_hotkey)
+   • Use keyboard_type/mouse_click ONLY for desktop apps (Word, Notepad, etc.)
+4. If a tool returns an error, diagnose, then try a different approach. Do not
    give up after one failure.
-4. If a tool returns text starting with "__HITL_REQUIRED__", STOP — the system
+5. If a tool returns text starting with "__HITL_REQUIRED__", STOP — the system
    will prompt the user. Do not attempt the same destructive command twice.
-5. When you've completed every step in the plan, say "TASK_COMPLETE" on its
+6. When you've completed every step in the plan, say "TASK_COMPLETE" on its
    own line, followed by a one-paragraph summary of what was accomplished.
 
 Do not invent file paths. If you need to know where something is, use
