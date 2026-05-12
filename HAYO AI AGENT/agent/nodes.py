@@ -224,34 +224,65 @@ _llm_with_tools = _main_llm.bind_tools(ALL_TOOLS)
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _tool_call_id(tc) -> str | None:
+    """Extract a tool_call id whether the entry is a dict or an object."""
+    if isinstance(tc, dict):
+        return tc.get("id")
+    return getattr(tc, "id", None)
+
+
 def _sanitize_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
     """
-    Remove any ToolMessage whose tool_call_id has no matching AIMessage with
-    tool_calls in the sequence. This prevents the API error:
-      "Messages with role 'tool' must be a response to a preceding message with 'tool_calls'"
+    Enforce strict OpenAI-compatible tool message sequencing.
 
-    This happens when _summarize_old_messages cuts the history at a point where
-    an AIMessage(tool_calls=[...]) ends up summarized but its ToolMessage(s) remain.
+    OpenAI-style APIs (DeepSeek, OpenAI, etc.) raise 400 if:
+      A) A ToolMessage has no preceding AIMessage with a matching tool_call_id
+      B) An AIMessage has tool_calls whose responses never appear
+
+    This sanitizer fixes both:
+      1. Drops orphan ToolMessages (case A)
+      2. Re-anchors each ToolMessage right after its declaring AIMessage
+      3. Synthesizes placeholder ToolMessages for any unanswered tool_calls (case B)
+
+    The result is a message sequence where every AIMessage(tool_calls=[a,b,c])
+    is immediately followed by ToolMessage(a), ToolMessage(b), ToolMessage(c)
+    in any order. No orphans, no missing responses.
     """
-    # Collect all tool_call ids that are declared in AIMessages
-    valid_ids: set[str] = set()
-    for msg in messages:
-        if isinstance(msg, AIMessage):
-            for tc in getattr(msg, "tool_calls", []) or []:
-                tid = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
-                if tid:
-                    valid_ids.add(tid)
+    if not messages:
+        return messages
 
-    # Keep every message, but drop ToolMessages with no matching call
-    sanitized = []
+    # Index every ToolMessage by its tool_call_id so we can re-anchor them later
+    tool_responses: dict[str, ToolMessage] = {}
     for msg in messages:
         if isinstance(msg, ToolMessage):
-            if msg.tool_call_id in valid_ids:
-                sanitized.append(msg)
-            # else: silently drop the orphaned ToolMessage
-        else:
-            sanitized.append(msg)
-    return sanitized
+            tool_responses[msg.tool_call_id] = msg
+
+    result: list[BaseMessage] = []
+    used_response_ids: set[str] = set()
+
+    for msg in messages:
+        if isinstance(msg, ToolMessage):
+            # Strip from natural position — we'll re-insert after the matching AIMessage
+            continue
+
+        result.append(msg)
+
+        if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
+            for tc in msg.tool_calls:
+                tid = _tool_call_id(tc)
+                if not tid or tid in used_response_ids:
+                    continue
+                used_response_ids.add(tid)
+                if tid in tool_responses:
+                    result.append(tool_responses[tid])
+                else:
+                    # Placeholder for missing response — prevents API 400
+                    result.append(ToolMessage(
+                        content="[Tool result missing — execution likely failed]",
+                        tool_call_id=tid,
+                    ))
+
+    return result
 
 
 def _summarize_old_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
