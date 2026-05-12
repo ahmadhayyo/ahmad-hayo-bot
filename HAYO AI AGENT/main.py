@@ -25,7 +25,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 
 # Load .env BEFORE importing the graph (LLM clients build at import time).
-load_dotenv(Path(__file__).parent / ".env", override=False)
+load_dotenv(Path(__file__).parent / ".env", override=True)
 
 from agent.workflow import compile_graph  # noqa: E402
 
@@ -44,7 +44,7 @@ def assert_keys_present() -> None:
         raise RuntimeError(
             "MODEL_PROVIDER='google' but GOOGLE_API_KEY is empty in .env"
         )
-    if MODEL_PROVIDER == "groq" and not os.getenv("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"):
+    if MODEL_PROVIDER == "groq" and not os.getenv("GROQ_API_KEY"):
         raise RuntimeError(
             "MODEL_PROVIDER='groq' but GROQ_API_KEY is empty in .env"
         )

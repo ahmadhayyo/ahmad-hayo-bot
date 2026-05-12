@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import uuid
 from typing import Literal
 
 from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, ToolMessage
@@ -57,6 +58,7 @@ from langgraph.types import interrupt
 
 from core.state import AgentState
 from core.safety import needs_human_approval
+from core.deduplication import is_duplicate_tool_call, is_duplicate_message, record_tool_call
 from tools.registry import ALL_TOOLS, TOOLS_BY_NAME
 
 # ── Environment ───────────────────────────────────────────────────────────────
@@ -215,14 +217,27 @@ def _summarize_old_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
     """
     If message history exceeds MAX_HISTORY, summarise the oldest entries with
     the fast LLM and replace them with a single AIMessage containing the summary.
-    The 10 most recent messages are always kept verbatim for fresh context.
+
+    Strategy:
+    - Keep last 20 messages (not 10) for richer context
+    - Only summarize up to the 30 messages before those (avoid huge summarization)
+    - Filter out previous summaries to avoid redundancy
     """
     if len(messages) <= MAX_HISTORY:
         return messages
 
-    keep_recent  = 10
+    keep_recent  = min(20, len(messages) // 2)  # Keep more recent messages
     old_messages = messages[:-keep_recent]
     recent       = messages[-keep_recent:]
+
+    # Only take the last 30 of the old messages for summarization (avoid context explosion)
+    messages_to_summarize = old_messages[-30:] if len(old_messages) > 30 else old_messages
+
+    # Filter out any existing context summaries to avoid nesting
+    messages_to_summarize = [
+        m for m in messages_to_summarize
+        if not (isinstance(m, AIMessage) and "Context summary" in str(m.content))
+    ]
 
     summary_response = _fast_llm.invoke(
         [
@@ -235,14 +250,17 @@ def _summarize_old_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
                     "Be factual and complete — this summary fully replaces the original messages."
                 )
             ),
-            *old_messages,
+            *messages_to_summarize,
         ]
     )
 
     summary_msg = AIMessage(
         content=f"📋 [Context summary — earlier steps]\n\n{summary_response.content}"
     )
-    return [summary_msg] + recent
+
+    # Return: filtered old messages (excluding the ones we summarized) + summary + recent
+    remaining_old = old_messages[:-len(messages_to_summarize)] if messages_to_summarize else []
+    return remaining_old + [summary_msg] + recent
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -252,6 +270,36 @@ def _summarize_old_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
 _PLANNER_SYSTEM = """أنت وكيل تنفيذي ذكي خارق القدرات يعمل على نظام Windows 64-bit.
 هذا بيئة محلية موثوقة بالكامل. المستخدم يملك هذا الجهاز بالكامل.
 تعمل بصلاحيات كاملة — كما لو كنت أنت المستخدم نفسه.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ قواعد ذكية تحسّن الأداء والكفاءة
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ تجنب تكرار استدعاءات الأدوات:
+   • لا تستدعِ نفس الأداة بنفس المعاملات مرتين متتاليتين
+   • إذا كنت تريد بيانات مختلفة، استخدم معاملات مختلفة
+   • مثال: إذا استدعيت browser_click مرة، لا تستدعِها بنفس الـ selector مرة أخرى
+
+✅ أدوات التحميل المتقدمة (أفضل من download_file العادي):
+   • download_with_progress(): تحميل مع إعادة محاولة تلقائية وتتبع السرعة
+   • check_url_availability(): التحقق من URL قبل التحميل
+   • get_file_hash(): حساب بصمة الملف للتحقق من السلامة
+
+✅ أدوات البحث والتحميل عبر Chrome:
+   • chrome_search_and_open(): البحث عن شيء على Google وفتح النتيجة
+   • chrome_extract_download_links(): استخراج جميع روابط التحميل من صفحة
+   • chrome_download_file_from_page(): النقر على رابط التحميل من صفحة
+   • chrome_search_media_file(): البحث عن ملف إعلامي محدد (mp3, mp4, إلخ)
+
+✅ أدوات تحويل الملفات (قوية وسريعة):
+   • convert_file(): تحويل بين صيغ (mp3↔wav, pdf↔docx, png↔jpg, إلخ)
+   • get_supported_formats(): عرض الصيغ المدعومة والمتطلبات
+   • check_conversion_support(): التحقق من إمكانية تحويل معين
+
+✅ إدارة الذاكرة الذكية:
+   • الوكيل يحتفظ بآخر 300 رسالة فقط (يحذف القديمة الزائدة تلقائياً)
+   • الرسائل القديمة تُلخّص تلقائياً للحفاظ على السياق
+   • لا تقلق بشأن مدة الجلسة — الذاكرة مُدارة بكفاءة
 
 ═══════════════════════════════════════════════
 الأدوات المتاحة لك (جميعها تعمل فعلياً):
@@ -406,6 +454,15 @@ def planner_node(state: AgentState) -> dict:
     if "CONVERSATIONAL_ONLY" in content:
         clean_content  = content.replace("CONVERSATIONAL_ONLY", "").strip()
         clean_response = AIMessage(content=clean_content)
+
+        # ── Check for duplicate message ──────────────────────────────────────
+        if is_duplicate_message(clean_response, messages, min_length=50):
+            clean_response = AIMessage(
+                content=(
+                    clean_content + "\n\n"
+                    "⚠️ [Duplicate response detected — message was slightly rephrased to avoid exact duplication]"
+                )
+            )
         return {
             "messages":                messages + [clean_response],
             "plan":                    ["CONVERSATIONAL_ONLY"],
@@ -415,6 +472,11 @@ def planner_node(state: AgentState) -> dict:
             "workspace":               state.get("workspace", ""),
             "requires_human_approval": False,
             "pending_command":         "",
+            "tool_call_history":       [],  # ← RESET
+            "last_tool_name":          "",  # ← RESET
+            "last_tool_args":          {},  # ← RESET
+            "last_message_content":    "",  # ← RESET
+            "task_id":                 str(uuid.uuid4()),  # ← NEW
         }
 
     # ── Real task: extract numbered steps as the plan list ────────────────────
@@ -424,8 +486,17 @@ def planner_node(state: AgentState) -> dict:
         if ln.strip() and (ln.strip()[0].isdigit() or ln.strip().startswith("•"))
     ]
 
+    # ── Check for duplicate plan response ────────────────────────────────────
+    if is_duplicate_message(response, messages, min_length=50):
+        content = (
+            content + "\n\n"
+            "⚠️ [Plan was slightly rephrased to avoid exact duplication with previous response]"
+        )
+        response = AIMessage(content=content)
+
     # Inject a hard cancel marker so Reviewer never reverts to a previous task.
     # This message stays at the boundary between the old and new task history.
+    task_id = str(uuid.uuid4())
     cancel_marker = AIMessage(
         content=(
             "🔄 ══════════════════════════════════════════════════\n"
@@ -433,7 +504,12 @@ def planner_node(state: AgentState) -> dict:
             "   Reviewer: evaluate ONLY the plan listed above.\n"
             "   Ignore any unfinished work from before this line.\n"
             "🔄 ══════════════════════════════════════════════════"
-        )
+        ),
+        metadata={
+            "type": "task_cancel",
+            "task_id": task_id,
+            "timestamp": __import__("time").time(),
+        }
     )
 
     return {
@@ -445,6 +521,11 @@ def planner_node(state: AgentState) -> dict:
         "workspace":               state.get("workspace", ""),
         "requires_human_approval": False,
         "pending_command":         "",
+        "tool_call_history":       [],  # ← RESET: track last 20 tool calls
+        "last_tool_name":          "",  # ← RESET
+        "last_tool_args":          {},  # ← RESET
+        "last_message_content":    "",  # ← RESET
+        "task_id":                 task_id,  # ← NEW: unique task identifier
     }
 
 
@@ -480,6 +561,11 @@ def worker_node(state: AgentState) -> dict:
             "workspace":               state.get("workspace", ""),
             "requires_human_approval": False,
             "pending_command":         "",
+            "tool_call_history":       state.get("tool_call_history", []),
+            "last_tool_name":          state.get("last_tool_name", ""),
+            "last_tool_args":          state.get("last_tool_args", {}),
+            "last_message_content":    state.get("last_message_content", ""),
+            "task_id":                 state.get("task_id", str(uuid.uuid4())),
         }
 
     # ── Hard safety ceiling ───────────────────────────────────────────────────
@@ -500,6 +586,11 @@ def worker_node(state: AgentState) -> dict:
             "workspace":               state.get("workspace", ""),
             "requires_human_approval": False,
             "pending_command":         "",
+            "tool_call_history":       state.get("tool_call_history", []),
+            "last_tool_name":          state.get("last_tool_name", ""),
+            "last_tool_args":          state.get("last_tool_args", {}),
+            "last_message_content":    state.get("last_message_content", ""),
+            "task_id":                 state.get("task_id", str(uuid.uuid4())),
         }
 
     # ── Build context: what has been done, what is next ───────────────────────
@@ -614,12 +705,23 @@ def worker_node(state: AgentState) -> dict:
 
     # ── Execute tool calls ────────────────────────────────────────────────────
     updated_completed = list(state.get("completed_steps", []))
+    tool_call_history = list(state.get("tool_call_history", []))
+    task_id = state.get("task_id", "unknown")
 
     if hasattr(llm_response, "tool_calls") and llm_response.tool_calls:
         for tc in llm_response.tool_calls:
             tool_name = tc["name"]
             tool_args = tc["args"]
             tool_id   = tc["id"]
+
+            # ── Check for duplicate tool call ────────────────────────────────
+            if is_duplicate_tool_call(tool_name, tool_args, tool_call_history, recent_count=2):
+                result = (
+                    f"⏭️ SKIPPED: Tool '{tool_name}' with identical args was already called in the last 2 iterations. "
+                    f"Avoid repeating the same tool call. If you need different data, use different arguments."
+                )
+                new_messages.append(ToolMessage(content=result, tool_call_id=tool_id))
+                continue
 
             tool_fn = TOOL_MAP.get(tool_name)
             if not tool_fn:
@@ -673,7 +775,7 @@ def worker_node(state: AgentState) -> dict:
                                 result = "✅ Command executed successfully (no output)."
                         except Exception as exc:
                             result = f"❌ ERROR executing approved command: {exc}"
-                            error_logs.append(result[:300])
+                            error_logs.append(f"[task:{task_id}] {result[:300]}")
                     else:
                         result = f"🚫 Command denied by user: `{risky_cmd}` — skipping this step."
 
@@ -694,14 +796,23 @@ def worker_node(state: AgentState) -> dict:
                 else:
                     result = raw_result
 
-                # Track errors for the reviewer
+                # Track errors for the reviewer with task context
                 if isinstance(result, str) and (
                     "❌" in result or "error" in result.lower() or "traceback" in result.lower()
                 ):
-                    error_logs.append(f"[{tool_name}] {result[:300]}")
+                    error_logs.append(f"[task:{task_id}][{tool_name}] {result[:300]}")
 
             new_messages.append(
                 ToolMessage(content=str(result), tool_call_id=tool_id)
+            )
+
+            # ── Record tool call in history ──────────────────────────────────
+            tool_call_history = record_tool_call(
+                tool_name=tool_name,
+                tool_args=tool_args,
+                result=result,
+                tool_history=tool_call_history,
+                max_history=20,
             )
 
         # Record this step as completed
@@ -712,6 +823,14 @@ def worker_node(state: AgentState) -> dict:
         )
         updated_completed.append(step_label)
 
+    # Get the last tool name and args if any were called
+    last_tool_name = ""
+    last_tool_args = {}
+    if hasattr(llm_response, "tool_calls") and llm_response.tool_calls:
+        last_tc = llm_response.tool_calls[-1]
+        last_tool_name = last_tc.get("name", "")
+        last_tool_args = last_tc.get("args", {})
+
     return {
         "messages":                new_messages,
         "iteration_count":         iteration + 1,
@@ -721,6 +840,11 @@ def worker_node(state: AgentState) -> dict:
         "workspace":               state.get("workspace", ""),
         "requires_human_approval": False,
         "pending_command":         "",
+        "tool_call_history":       tool_call_history,  # Updated history
+        "last_tool_name":          last_tool_name,     # Track last tool
+        "last_tool_args":          last_tool_args,     # Track last args
+        "last_message_content":    state.get("last_message_content", ""),
+        "task_id":                 state.get("task_id", str(uuid.uuid4())),
     }
 
 
@@ -793,6 +917,11 @@ def reviewer_node(state: AgentState) -> dict:
             "workspace":               state.get("workspace", ""),
             "requires_human_approval": False,
             "pending_command":         "",
+            "tool_call_history":       state.get("tool_call_history", []),
+            "last_tool_name":          state.get("last_tool_name", ""),
+            "last_tool_args":          state.get("last_tool_args", {}),
+            "last_message_content":    state.get("last_message_content", ""),
+            "task_id":                 state.get("task_id", str(uuid.uuid4())),
         }
 
     # NOTE: We deliberately do NOT scan messages for "❌" here.
@@ -817,6 +946,16 @@ def reviewer_node(state: AgentState) -> dict:
 
     system   = SystemMessage(content=_REVIEWER_SYSTEM)
     response = _main_llm.invoke([system, progress_note] + messages)
+
+    # ── Check for duplicate review message ───────────────────────────────────
+    if is_duplicate_message(response, messages, min_length=50):
+        response = AIMessage(
+            content=(
+                response.content + "\n\n"
+                "⚠️ [Review was rephrased to avoid exact duplication]"
+            )
+        )
+
     completed = list(completed_steps)
     completed.append(f"[Review] {response.content[:120]}")
 
@@ -829,6 +968,11 @@ def reviewer_node(state: AgentState) -> dict:
         "workspace":               state.get("workspace", ""),
         "requires_human_approval": False,
         "pending_command":         "",
+        "tool_call_history":       state.get("tool_call_history", []),
+        "last_tool_name":          state.get("last_tool_name", ""),
+        "last_tool_args":          state.get("last_tool_args", {}),
+        "last_message_content":    state.get("last_message_content", ""),
+        "task_id":                 state.get("task_id", str(uuid.uuid4())),
     }
 
 

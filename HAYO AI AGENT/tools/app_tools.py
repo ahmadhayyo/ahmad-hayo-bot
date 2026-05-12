@@ -81,7 +81,7 @@ def open_app(
         str,
         "App name. Accepts friendly names (chrome, vscode, word, settings) or exe paths.",
     ],
-    args: Annotated[str, "Optional arguments passed to the app."] = "",
+    app_args: Annotated[str, "Optional arguments passed to the app."] = "",
 ) -> str:
     """
     Launch a desktop application on Windows.
@@ -95,7 +95,7 @@ def open_app(
     """
     key = name.strip().lower()
     target = APP_ALIASES.get(key, name.strip())
-    full = f'{target} {args}'.strip() if args else target
+    full = f'{target} {app_args}'.strip() if app_args else target
 
     # 1) os.startfile is the most permissive — it accepts paths, urls,
     #    Start-Menu names, and ms-* protocol URIs.

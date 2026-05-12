@@ -92,6 +92,24 @@ from tools.office_tools import (
     convert_excel_to_pdf,
     convert_word_to_pdf,
 )
+from tools.advanced_download import (
+    download_with_progress,
+    check_url_availability,
+    get_file_hash,
+)
+from tools.chrome_management import (
+    chrome_search_and_open,
+    chrome_download_file_from_page,
+    chrome_extract_download_links,
+    chrome_handle_redirects,
+    chrome_search_media_file,
+    chrome_get_direct_download_url,
+)
+from tools.file_conversion import (
+    convert_file,
+    get_supported_formats,
+    check_conversion_support,
+)
 
 ALL_TOOLS: list[BaseTool] = [
     # ═══════════════════════════════════════════════════════════
@@ -195,6 +213,30 @@ ALL_TOOLS: list[BaseTool] = [
     pdf_merge,
     convert_excel_to_pdf,
     convert_word_to_pdf,
+
+    # ═══════════════════════════════════════════════════════════
+    # ADVANCED DOWNLOAD (with progress, retry, integrity)
+    # ═══════════════════════════════════════════════════════════
+    download_with_progress,
+    check_url_availability,
+    get_file_hash,
+
+    # ═══════════════════════════════════════════════════════════
+    # CHROME MANAGEMENT (search, extract links, handle redirects)
+    # ═══════════════════════════════════════════════════════════
+    chrome_search_and_open,
+    chrome_download_file_from_page,
+    chrome_extract_download_links,
+    chrome_handle_redirects,
+    chrome_search_media_file,
+    chrome_get_direct_download_url,
+
+    # ═══════════════════════════════════════════════════════════
+    # FILE CONVERSION (audio, video, docs, images)
+    # ═══════════════════════════════════════════════════════════
+    convert_file,
+    get_supported_formats,
+    check_conversion_support,
 ]
 
 TOOLS_BY_NAME: dict[str, BaseTool] = {t.name: t for t in ALL_TOOLS}
