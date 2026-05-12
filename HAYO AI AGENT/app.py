@@ -402,17 +402,36 @@ async def on_chat_start() -> None:
 # Voice input handlers — receive audio chunks from the browser microphone
 # ─────────────────────────────────────────────────────────────────────────────
 @cl.on_audio_start
-async def on_audio_start():
-    """Called when the user presses the mic button. Reset the buffer."""
+async def on_audio_start() -> bool:
+    """
+    Called when the user presses the mic button.
+
+    Return True to accept the audio stream, False to refuse.
+    We refuse early if no STT provider is configured — otherwise the user
+    speaks, expects something, and gets nothing.
+    """
+    if not stt_available():
+        await cl.Message(
+            content=(
+                "❌ **لا يمكن استخدام الصوت** — لا يوجد مفتاح API صالح للتعرف على الصوت.\n\n"
+                "أضف أحد المفاتيح التالية في `.env` ثم أعد تشغيل HAYO:\n"
+                "  • `GROQ_API_KEY` — مجاني وسريع جداً (https://console.groq.com)\n"
+                "  • أو `OPENAI_API_KEY` — مدفوع\n\n"
+                "(الرد الصوتي TTS يعمل بدون مفاتيح — يمكنك الكتابة وستسمع الرد.)"
+            )
+        ).send()
+        return False
+
+    # Fresh buffer for this recording
     cl.user_session.set("audio_buffer", bytearray())
     cl.user_session.set("audio_mime", "audio/webm")
     return True
 
 
 @cl.on_audio_chunk
-async def on_audio_chunk(chunk: cl.InputAudioChunk):
+async def on_audio_chunk(chunk: cl.InputAudioChunk) -> None:
     """Stream raw audio bytes from the browser into our buffer."""
-    buf: bytearray = cl.user_session.get("audio_buffer")
+    buf = cl.user_session.get("audio_buffer")
     if buf is None:
         buf = bytearray()
         cl.user_session.set("audio_buffer", buf)
@@ -422,54 +441,62 @@ async def on_audio_chunk(chunk: cl.InputAudioChunk):
 
 
 @cl.on_audio_end
-async def on_audio_end(elements):
+async def on_audio_end() -> None:
     """
     User finished speaking. Transcribe the buffered audio and run it through
     the same flow as a typed message — so voice and text behave identically.
+
+    IMPORTANT: Chainlit calls this with NO arguments. Adding any parameter
+    silently breaks the callback (it just never fires).
     """
-    buf: bytearray = cl.user_session.get("audio_buffer", bytearray())
-    mime: str = cl.user_session.get("audio_mime", "audio/webm")
+    buf = cl.user_session.get("audio_buffer")
+    mime: str = cl.user_session.get("audio_mime") or "audio/webm"
+    # Reset buffer for next recording
     cl.user_session.set("audio_buffer", bytearray())
 
-    if not buf:
-        await cl.Message(content="⚠️ لم يُسجَّل أي صوت.").send()
+    audio_bytes = bytes(buf) if buf else b""
+    size_kb = len(audio_bytes) / 1024
+
+    if not audio_bytes or size_kb < 0.5:  # less than 500 bytes ≈ no real audio
+        await cl.Message(content=f"⚠️ لم يُسجَّل صوت كافٍ ({size_kb:.1f}KB). جرّب الإمساك بزر المايكروفون لفترة أطول.").send()
         return
 
-    # Pick a filename extension that matches the recorded MIME
+    # Pick a filename extension matching the recorded MIME
     ext = "webm"
     if "ogg" in mime: ext = "ogg"
     elif "wav" in mime: ext = "wav"
     elif "mp4" in mime or "m4a" in mime: ext = "m4a"
     elif "mpeg" in mime or "mp3" in mime: ext = "mp3"
 
-    # Show what we heard
-    await cl.Message(content="🎙️ جارٍ تحويل الصوت إلى نص...").send()
+    thinking = cl.Message(content=f"🎙️ سمعتك ({size_kb:.0f}KB). جارٍ التحويل...")
+    await thinking.send()
+
     try:
-        transcript = await transcribe(bytes(buf), filename=f"voice.{ext}")
+        transcript = await transcribe(audio_bytes, filename=f"voice.{ext}")
     except Exception as exc:
-        await cl.Message(
-            content=(
-                f"❌ **فشل التعرف على الصوت**: {exc}\n\n"
-                "تأكد من أن لديك مفتاحاً صالحاً في `.env`:\n"
-                "  • `GROQ_API_KEY` (مجاني من https://console.groq.com)\n"
-                "  • أو `OPENAI_API_KEY`"
-            )
-        ).send()
+        thinking.content = (
+            f"❌ **فشل التعرف على الصوت**\n\n```\n{exc}\n```\n\n"
+            "تأكد من أن المفتاح في `.env` صحيح وفعّال:\n"
+            "  • `GROQ_API_KEY` — مجاني من https://console.groq.com\n"
+            "  • أو `OPENAI_API_KEY` — بديل مدفوع"
+        )
+        await thinking.update()
         return
 
     if not transcript.strip():
-        await cl.Message(content="⚠️ لم أفهم ما قلته. حاول مرة أخرى.").send()
+        thinking.content = "⚠️ لم أفهم ما قلته. حاول مرة أخرى بصوت أوضح."
+        await thinking.update()
         return
 
-    # Echo what we heard (and display the user message in the chat)
-    await cl.Message(content=f"🎙️ **{transcript}**", author="user").send()
+    # Replace the "thinking" message with what we actually heard
+    thinking.content = f"🎙️ **{transcript}**"
+    await thinking.update()
 
-    # Auto-enable voice reply when user speaks
+    # Auto-enable voice reply since the user is clearly using voice
     cl.user_session.set("voice_mode", True)
 
-    # Route through the normal text pipeline by simulating a typed message.
-    # Calling the underlying coroutine directly works because @cl.on_message
-    # registers the function but leaves the original callable accessible.
+    # Route through the normal text pipeline. @cl.on_message decorator returns
+    # the original function unchanged, so calling it directly here works.
     fake = cl.Message(content=transcript, elements=[])
     await on_message(fake)
 
