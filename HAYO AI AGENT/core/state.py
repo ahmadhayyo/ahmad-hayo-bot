@@ -8,15 +8,68 @@ a maximum history limit (default 300) to prevent memory exhaustion during long s
 
 from typing import Annotated
 from typing_extensions import TypedDict
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
+
+
+def _sanitize_tool_pairs(messages: list[BaseMessage]) -> list[BaseMessage]:
+    """
+    Enforce strict OpenAI-compatible tool message sequencing in the reducer itself.
+
+    Guarantees that the stored state never contains:
+      - Orphan ToolMessages (no matching AIMessage.tool_calls)
+      - AIMessage.tool_calls without matching ToolMessage responses
+
+    Without this, DeepSeek/OpenAI APIs return 400 errors like:
+      "Messages with role 'tool' must be a response to a preceding message with 'tool_calls'"
+      "An assistant message with 'tool_calls' must be followed by tool messages..."
+    """
+    if not messages:
+        return messages
+
+    # Index every ToolMessage by tool_call_id (last one wins on collision)
+    tool_responses: dict[str, ToolMessage] = {}
+    for msg in messages:
+        if isinstance(msg, ToolMessage):
+            tool_responses[msg.tool_call_id] = msg
+
+    result: list[BaseMessage] = []
+    for msg in messages:
+        if isinstance(msg, ToolMessage):
+            # Skip — will re-insert after the matching AIMessage
+            continue
+
+        result.append(msg)
+
+        if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
+            local_seen: set[str] = set()
+            for tc in msg.tool_calls:
+                tid = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                if not tid or tid in local_seen:
+                    continue
+                local_seen.add(tid)
+                if tid in tool_responses:
+                    result.append(tool_responses[tid])
+                else:
+                    # Placeholder so the AIMessage tool_call is always answered
+                    result.append(ToolMessage(
+                        content="[Tool result missing — execution likely failed]",
+                        tool_call_id=tid,
+                    ))
+
+    return result
 
 
 def _add_messages_with_limit(left: list[BaseMessage], right: list[BaseMessage] | BaseMessage, max_messages: int = 300) -> list[BaseMessage]:
     """
-    Custom reducer for messages that enforces a maximum limit.
+    Custom reducer for messages that enforces a maximum limit AND tool-pair safety.
 
-    Keeps the oldest summary messages and most recent messages to stay under max_messages.
-    Strategy: Keep first 50 (summaries) + last 250 (recent context).
+    Strategy:
+    - If right is significantly larger than left, treat as authoritative replacement
+      (this is how all our nodes work — they return the full sanitized message list
+      plus their additions, NOT just deltas).
+    - Otherwise, append (standard LangGraph behavior).
+    - Always apply tool-pair sanitization at the end to prevent API 400 errors.
+    - Keep first 50 (summaries) + last (max-50) recent if over the limit.
     """
     # Normalize right to list
     if isinstance(right, BaseMessage):
@@ -24,19 +77,22 @@ def _add_messages_with_limit(left: list[BaseMessage], right: list[BaseMessage] |
     else:
         right = list(right)
 
-    combined = list(left) + list(right)
+    if not right:
+        return _sanitize_tool_pairs(list(left))
 
-    if len(combined) <= max_messages:
-        return combined
-
-    # Keep first 50 (summaries) and last 250 (recent)
-    keep_old = 50
-    keep_recent = 250
+    # Replacement heuristic: nodes return the full message list, not just deltas.
+    # If right >= left in length and right looks like a superset, use right as-is.
+    if len(right) >= len(left) and len(right) > 2:
+        combined = list(right)
+    else:
+        combined = list(left) + list(right)
 
     if len(combined) > max_messages:
+        keep_old = 50
         combined = combined[:keep_old] + combined[-(max_messages - keep_old):]
 
-    return combined
+    # Always sanitize the final result so the stored state is never broken
+    return _sanitize_tool_pairs(combined)
 
 
 def _add_messages(left: list[BaseMessage], right: list[BaseMessage] | BaseMessage) -> list[BaseMessage]:
