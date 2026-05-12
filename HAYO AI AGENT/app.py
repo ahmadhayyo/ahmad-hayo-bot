@@ -461,18 +461,27 @@ async def on_audio_end() -> None:
         await cl.Message(content=f"⚠️ لم يُسجَّل صوت كافٍ ({size_kb:.1f}KB). جرّب الإمساك بزر المايكروفون لفترة أطول.").send()
         return
 
-    # Pick a filename extension matching the recorded MIME
-    ext = "webm"
+    # Pick a filename extension matching the recorded MIME (for fallback when
+    # the audio is already a container, e.g. webm/ogg). For raw PCM (Chainlit's
+    # AudioWorklet) the transcribe() function auto-wraps it in WAV.
+    ext = "wav"
     if "ogg" in mime: ext = "ogg"
-    elif "wav" in mime: ext = "wav"
+    elif "webm" in mime: ext = "webm"
     elif "mp4" in mime or "m4a" in mime: ext = "m4a"
     elif "mpeg" in mime or "mp3" in mime: ext = "mp3"
+
+    # Sample rate from .chainlit/config.toml — keep these in sync
+    try:
+        from chainlit.config import config as _cl_config
+        sample_rate = _cl_config.features.audio.sample_rate or 24000
+    except Exception:
+        sample_rate = 24000
 
     thinking = cl.Message(content=f"🎙️ سمعتك ({size_kb:.0f}KB). جارٍ التحويل...")
     await thinking.send()
 
     try:
-        transcript = await transcribe(audio_bytes, filename=f"voice.{ext}")
+        transcript = await transcribe(audio_bytes, filename=f"voice.{ext}", sample_rate=sample_rate)
     except Exception as exc:
         thinking.content = (
             f"❌ **فشل التعرف على الصوت**\n\n```\n{exc}\n```\n\n"

@@ -13,6 +13,12 @@ Architecture:
       - 14+ Arabic dialects supported
       - Default: ar-EG-SalmaNeural (warm, natural Egyptian Arabic)
 
+Audio format note:
+  Chainlit's browser frontend uses AudioWorklet, which delivers RAW PCM bytes
+  (16-bit signed little-endian, mono, 24000 Hz) without any container header.
+  Whisper/Groq need a real media file (wav, mp3, etc.), so we wrap PCM in a
+  minimal WAV header before sending. See pcm_to_wav() below.
+
 Designed for ChatGPT-style voice mode: user speaks → agent listens → agent
 speaks back with emotion + executes any tools the user requested.
 """
@@ -23,7 +29,9 @@ import asyncio
 import io
 import os
 import re
+import struct
 import tempfile
+import wave
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -145,6 +153,70 @@ async def text_to_speech_file(
     return out_path
 
 
+# ── Audio format helpers ─────────────────────────────────────────────────────
+def pcm_to_wav(pcm_bytes: bytes, sample_rate: int = 24000, channels: int = 1, sample_width: int = 2) -> bytes:
+    """
+    Wrap raw PCM bytes in a minimal WAV container so Whisper/Groq can decode it.
+
+    Defaults match what Chainlit's AudioWorklet sends:
+      - 16-bit signed little-endian (sample_width = 2)
+      - mono (channels = 1)
+      - 24000 Hz (matches .chainlit/config.toml [features.audio] sample_rate)
+
+    A WAV header is 44 bytes — we use the stdlib `wave` module so we don't
+    have to hand-roll the RIFF format and risk getting it wrong.
+    """
+    if not pcm_bytes:
+        return b""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(channels)
+        w.setsampwidth(sample_width)
+        w.setframerate(sample_rate)
+        w.writeframes(pcm_bytes)
+    return buf.getvalue()
+
+
+def looks_like_raw_pcm(audio: bytes, mime: str = "") -> bool:
+    """
+    Heuristic: does this look like raw PCM (no container) rather than a real
+    media file? We need to wrap raw PCM in WAV before sending to Whisper.
+
+    Real audio files start with magic bytes:
+      WAV   → b"RIFF"
+      MP3   → b"ID3" or b"\\xff\\xfb" / b"\\xff\\xf3" / b"\\xff\\xf2"
+      WebM  → b"\\x1a\\x45\\xdf\\xa3"
+      OGG   → b"OggS"
+      M4A   → b"....ftyp"  (bytes 4-8)
+      FLAC  → b"fLaC"
+
+    If none of those match, treat it as raw PCM.
+    """
+    if not audio or len(audio) < 8:
+        return True
+    head = audio[:8]
+    # WAV / RIFF
+    if head.startswith(b"RIFF"):
+        return False
+    # MP3
+    if head.startswith(b"ID3") or head[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"):
+        return False
+    # WebM / Matroska EBML
+    if head.startswith(b"\x1a\x45\xdf\xa3"):
+        return False
+    # OGG
+    if head.startswith(b"OggS"):
+        return False
+    # M4A / MP4 (ftyp at offset 4)
+    if audio[4:8] == b"ftyp":
+        return False
+    # FLAC
+    if head.startswith(b"fLaC"):
+        return False
+    # Looks like raw PCM
+    return True
+
+
 # ── Speech-to-Text (Groq → OpenAI Whisper fallback) ──────────────────────────
 # Tries providers in this order, using the first one that has a valid key:
 #   1. Groq whisper-large-v3   (fastest, free tier, ~10x faster than OpenAI)
@@ -202,14 +274,31 @@ def _try_openai_transcribe(audio_bytes: bytes, filename: str) -> str | None:
         return None
 
 
-def transcribe_sync(audio_bytes: bytes, filename: str = "audio.webm") -> str:
+def transcribe_sync(
+    audio_bytes: bytes,
+    filename: str = "audio.wav",
+    sample_rate: int = 24000,
+) -> str:
     """
     Transcribe audio bytes to text using whichever Whisper provider is configured.
+
+    Handles BOTH input shapes:
+      - A real audio file (mp3, webm, wav, ogg, m4a, flac, ...)
+      - Raw PCM bytes from Chainlit's AudioWorklet (16-bit LE mono, ~24kHz)
+
+    If the bytes look like raw PCM (no recognised magic header), we wrap them
+    in a WAV container before sending to Whisper. Without this, Groq returns
+    'could not process file - is it a valid media file?'.
 
     Tries Groq first (free + fast), then OpenAI as fallback. Raises with a
     helpful error message if no provider works.
     """
     _STT_PROVIDERS_TRIED.clear()
+
+    # If this is raw PCM (no container), wrap in WAV so Whisper can decode it
+    if looks_like_raw_pcm(audio_bytes):
+        audio_bytes = pcm_to_wav(audio_bytes, sample_rate=sample_rate)
+        filename = "audio.wav"
 
     for fn in (_try_groq_transcribe, _try_openai_transcribe):
         result = fn(audio_bytes, filename)
@@ -226,9 +315,13 @@ def transcribe_sync(audio_bytes: bytes, filename: str = "audio.webm") -> str:
     )
 
 
-async def transcribe(audio_bytes: bytes, filename: str = "audio.webm") -> str:
+async def transcribe(
+    audio_bytes: bytes,
+    filename: str = "audio.wav",
+    sample_rate: int = 24000,
+) -> str:
     """Async wrapper around transcribe_sync."""
-    return await asyncio.to_thread(transcribe_sync, audio_bytes, filename)
+    return await asyncio.to_thread(transcribe_sync, audio_bytes, filename, sample_rate)
 
 
 def stt_available() -> bool:
