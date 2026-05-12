@@ -138,6 +138,19 @@ from tools.memory_tools import (
     search_past_conversations,
     recall_conversation_details,
 )
+from tools.github_tools import (
+    github_clone,
+    github_status,
+    github_commit_push,
+    github_pull,
+    github_create_repo,
+    github_branch,
+)
+from tools.gdrive_tools import (
+    gdrive_list,
+    gdrive_download,
+    gdrive_upload,
+)
 
 ALL_TOOLS: list[BaseTool] = [
     # ═══════════════════════════════════════════════════════════
@@ -299,6 +312,23 @@ ALL_TOOLS: list[BaseTool] = [
     list_past_conversations,
     search_past_conversations,
     recall_conversation_details,
+
+    # ═══════════════════════════════════════════════════════════
+    # GITHUB — git operations (clone, commit, push, pull, branches)
+    # ═══════════════════════════════════════════════════════════
+    github_clone,
+    github_status,
+    github_commit_push,
+    github_pull,
+    github_create_repo,
+    github_branch,
+
+    # ═══════════════════════════════════════════════════════════
+    # GOOGLE DRIVE — upload, download, list files
+    # ═══════════════════════════════════════════════════════════
+    gdrive_list,
+    gdrive_download,
+    gdrive_upload,
 ]
 
 TOOLS_BY_NAME: dict[str, BaseTool] = {t.name: t for t in ALL_TOOLS}
