@@ -110,6 +110,16 @@ from tools.file_conversion import (
     get_supported_formats,
     check_conversion_support,
 )
+from tools.replit_tools import (
+    replit_open_project,
+    replit_list_files,
+    replit_read_file,
+    replit_update_file,
+    replit_git_commit,
+    replit_git_sync,
+    replit_run_project,
+    replit_create_project_structure,
+)
 
 ALL_TOOLS: list[BaseTool] = [
     # ═══════════════════════════════════════════════════════════
@@ -237,6 +247,18 @@ ALL_TOOLS: list[BaseTool] = [
     convert_file,
     get_supported_formats,
     check_conversion_support,
+
+    # ═══════════════════════════════════════════════════════════
+    # REPLIT INTEGRATION (project management, git sync, execution)
+    # ═══════════════════════════════════════════════════════════
+    replit_open_project,
+    replit_list_files,
+    replit_read_file,
+    replit_update_file,
+    replit_git_commit,
+    replit_git_sync,
+    replit_run_project,
+    replit_create_project_structure,
 ]
 
 TOOLS_BY_NAME: dict[str, BaseTool] = {t.name: t for t in ALL_TOOLS}
