@@ -14,6 +14,9 @@ agent_memory.db
 agent_memory.db-shm
 agent_memory.db-wal
 agent_memory.db.old.*
+conversations.db
+conversations.db-shm
+conversations.db-wal
 last_session.json
 .browser_profile/
 .files/

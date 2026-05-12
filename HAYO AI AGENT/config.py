@@ -10,6 +10,7 @@ Supported providers: google, anthropic, openai, deepseek, groq
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Literal
@@ -20,6 +21,15 @@ from dotenv import load_dotenv
 ROOT_DIR: Path = Path(__file__).resolve().parent
 ENV_PATH: Path = ROOT_DIR / ".env"
 load_dotenv(dotenv_path=ENV_PATH, override=False)
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger("hayo")
 
 
 def _get(name: str, default: str = "") -> str:
@@ -73,9 +83,9 @@ GROQ_AGENT_MODEL: str = _get("GROQ_AGENT_MODEL", "llama-3.3-70b-versatile")
 GROQ_SUMMARIZER_MODEL: str = _get("GROQ_SUMMARIZER_MODEL", "llama-3.1-8b-instant")
 
 # ── Agent behaviour ─────────────────────────────────────────────────────────
-MAX_ITERATIONS: int = _get_int("MAX_ITERATIONS", 50)
-MAX_HISTORY: int = _get_int("MAX_HISTORY", 15)
-PS_TIMEOUT: int = _get_int("PS_TIMEOUT", 120)
+MAX_ITERATIONS: int = min(_get_int("MAX_ITERATIONS", 50), 500)
+MAX_HISTORY: int = min(_get_int("MAX_HISTORY", 30), 300)
+PS_TIMEOUT: int = min(_get_int("PS_TIMEOUT", 120), 300)
 
 # ── Workspace / downloads ───────────────────────────────────────────────────
 DEFAULT_WORKSPACE: Path = Path(_get("DEFAULT_WORKSPACE", str(ROOT_DIR)))

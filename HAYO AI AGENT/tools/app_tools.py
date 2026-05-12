@@ -99,7 +99,7 @@ def open_app(
 
     # 1) os.startfile is the most permissive — it accepts paths, urls,
     #    Start-Menu names, and ms-* protocol URIs.
-    if not args:
+    if not app_args:
         ok, info = _try_startfile(target)
         if ok:
             return f"[OK] Launched '{name}' via {info}"
@@ -112,7 +112,7 @@ def open_app(
     # 3) Last resort: powershell Start-Process
     try:
         subprocess.Popen(
-            ["powershell.exe", "-NoProfile", "-Command", f"Start-Process '{target}' '{args}'"],
+            ["powershell.exe", "-NoProfile", "-Command", f"Start-Process '{target}' '{app_args}'"],
             shell=False,
         )
         return f"[OK] Launched '{name}' via Start-Process"

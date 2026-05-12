@@ -19,14 +19,21 @@ from tools.app_tools import (
 from tools.browser_tools import (
     browser_click,
     browser_close,
+    browser_close_tab,
+    browser_download_to_desktop,
     browser_download_via_click,
     browser_eval_js,
     browser_fill,
+    browser_get_cookies,
     browser_get_text,
+    browser_list_tabs,
+    browser_login,
+    browser_new_tab,
     browser_open,
     browser_press,
     browser_react_fill,
     browser_screenshot,
+    browser_switch_tab,
     browser_wait_for,
 )
 from tools.desktop_tools import (
@@ -184,8 +191,15 @@ ALL_TOOLS: list[BaseTool] = [
     browser_press,
     browser_screenshot,
     browser_download_via_click,
+    browser_download_to_desktop,
     browser_eval_js,
     browser_wait_for,
+    browser_login,
+    browser_new_tab,
+    browser_switch_tab,
+    browser_list_tabs,
+    browser_close_tab,
+    browser_get_cookies,
     browser_close,
 
     # ═══════════════════════════════════════════════════════════
