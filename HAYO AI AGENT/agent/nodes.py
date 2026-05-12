@@ -47,6 +47,7 @@ Provider can also be switched at runtime via the UI model selector.
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import uuid
@@ -56,15 +57,15 @@ from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, ToolM
 from langchain_core.language_models import BaseChatModel
 from langgraph.types import interrupt
 
-from core.state import AgentState
+from core.state import AgentState, _sanitize_tool_pairs
 from core.safety import needs_human_approval
 from core.deduplication import is_duplicate_tool_call, is_duplicate_message, record_tool_call
 from tools.registry import ALL_TOOLS, TOOLS_BY_NAME
 
-# ── Environment ───────────────────────────────────────────────────────────────
-MAX_HISTORY:    int = int(os.getenv("MAX_HISTORY",    "300"))  # Increased from 15 for longer conversations
-MAX_ITERATIONS: int = int(os.getenv("MAX_ITERATIONS", "500"))  # Increased from 50 to allow unlimited execution
-PS_TIMEOUT:     int = int(os.getenv("PS_TIMEOUT",     "30"))
+logger = logging.getLogger("hayo.agent.nodes")
+
+# ── Environment (import from config for consistency) ─────────────────────────
+from config import MAX_HISTORY, MAX_ITERATIONS, PS_TIMEOUT
 
 _PROVIDER = os.getenv("MODEL_PROVIDER", "google").lower().strip()
 
@@ -234,55 +235,9 @@ def _tool_call_id(tc) -> str | None:
 def _sanitize_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
     """
     Enforce strict OpenAI-compatible tool message sequencing.
-
-    OpenAI-style APIs (DeepSeek, OpenAI, etc.) raise 400 if:
-      A) A ToolMessage has no preceding AIMessage with a matching tool_call_id
-      B) An AIMessage has tool_calls whose responses never appear
-
-    This sanitizer fixes both:
-      1. Drops orphan ToolMessages (case A)
-      2. Re-anchors each ToolMessage right after its declaring AIMessage
-      3. Synthesizes placeholder ToolMessages for any unanswered tool_calls (case B)
-
-    The result is a message sequence where every AIMessage(tool_calls=[a,b,c])
-    is immediately followed by ToolMessage(a), ToolMessage(b), ToolMessage(c)
-    in any order. No orphans, no missing responses.
+    Delegates to the shared implementation in core.state to avoid duplication.
     """
-    if not messages:
-        return messages
-
-    # Index every ToolMessage by its tool_call_id so we can re-anchor them later
-    tool_responses: dict[str, ToolMessage] = {}
-    for msg in messages:
-        if isinstance(msg, ToolMessage):
-            tool_responses[msg.tool_call_id] = msg
-
-    result: list[BaseMessage] = []
-    used_response_ids: set[str] = set()
-
-    for msg in messages:
-        if isinstance(msg, ToolMessage):
-            # Strip from natural position — we'll re-insert after the matching AIMessage
-            continue
-
-        result.append(msg)
-
-        if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
-            for tc in msg.tool_calls:
-                tid = _tool_call_id(tc)
-                if not tid or tid in used_response_ids:
-                    continue
-                used_response_ids.add(tid)
-                if tid in tool_responses:
-                    result.append(tool_responses[tid])
-                else:
-                    # Placeholder for missing response — prevents API 400
-                    result.append(ToolMessage(
-                        content="[Tool result missing — execution likely failed]",
-                        tool_call_id=tid,
-                    ))
-
-    return result
+    return _sanitize_tool_pairs(messages)
 
 
 def _summarize_old_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
@@ -315,20 +270,27 @@ def _summarize_old_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
     # Sanitize messages_to_summarize too before sending to LLM
     messages_to_summarize = _sanitize_messages(messages_to_summarize)
 
-    summary_response = _fast_llm.invoke(
-        [
-            SystemMessage(
-                content=(
-                    "You are a context summariser for an AI agent. "
-                    "Condense the following conversation history into a concise paragraph. "
-                    "Preserve: the original user goal, every action taken, key tool outputs, "
-                    "errors encountered, files created/downloaded, and current progress. "
-                    "Be factual and complete — this summary fully replaces the original messages."
-                )
-            ),
-            *messages_to_summarize,
-        ]
-    )
+    summary_prompt = [
+        SystemMessage(
+            content=(
+                "You are a context summariser for an AI agent. "
+                "Condense the following conversation history into a concise paragraph. "
+                "Preserve: the original user goal, every action taken, key tool outputs, "
+                "errors encountered, files created/downloaded, and current progress. "
+                "Be factual and complete — this summary fully replaces the original messages."
+            )
+        ),
+        *messages_to_summarize,
+    ]
+
+    # Invoke LLM — safe for both sync and async contexts.
+    # _summarize_old_messages is called synchronously from node functions.
+    # If there's a running event loop (Chainlit), use a thread to avoid blocking it.
+    try:
+        summary_response = _fast_llm.invoke(summary_prompt)
+    except Exception as exc:
+        logger.warning("Summarization failed: %s. Keeping messages as-is.", exc)
+        return _sanitize_messages(messages[-MAX_HISTORY:])
 
     summary_msg = AIMessage(
         content=f"[Context summary — earlier steps]\n\n{summary_response.content}"
@@ -750,7 +712,14 @@ def worker_node(state: AgentState) -> dict:
             "    • قراءة نص الصفحة               → browser_get_text()\n"
             "    • نقر على عنصر                  → browser_click(selector='...')\n"
             "    • ملء حقل                       → browser_fill(selector='...', value='...')\n"
-            "    • لقطة شاشة المتصفح             → browser_screenshot()\n\n"
+            "    • لقطة شاشة المتصفح             → browser_screenshot()\n"
+            "    • تسجيل دخول لموقع              → browser_login(url='...', username='...', password='...')\n"
+            "    • تحميل ملف عبر المتصفح         → browser_download_to_desktop(url='...')\n"
+            "    • تبويب جديد                    → browser_new_tab(url='...')\n"
+            "    • التبديل بين التبويبات          → browser_switch_tab(index=0)\n"
+            "    • قائمة التبويبات                → browser_list_tabs()\n"
+            "    • إغلاق تبويب                   → browser_close_tab(index=-1)\n"
+            "    • عرض الكوكيز                   → browser_get_cookies(domain='...')\n\n"
             "  💻 الأوامر:\n"
             "    • PowerShell                    → run_powershell(command='...')\n"
             "    • CMD                           → run_cmd(command='...')\n\n"

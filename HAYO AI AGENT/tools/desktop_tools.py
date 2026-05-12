@@ -130,10 +130,26 @@ def keyboard_type(
     text: Annotated[str, "Text to type into the focused window."],
     interval: Annotated[float, "Seconds between keystrokes (use 0 for instant)."] = 0.0,
 ) -> str:
-    """Type text into whatever window is currently focused."""
+    """
+    Type text into whatever window is currently focused.
+    Supports Unicode/Arabic text via clipboard paste fallback.
+    ASCII-only text uses direct keystroke injection for finer control.
+    """
     pg = _gui()
     try:
-        pg.write(text, interval=interval)
+        is_ascii = all(ord(c) < 128 for c in text)
+        if is_ascii and interval > 0:
+            pg.write(text, interval=interval)
+        else:
+            import subprocess
+            # Use PowerShell to set clipboard (works on Windows without extra deps)
+            subprocess.run(
+                ["powershell.exe", "-NoProfile", "-Command",
+                 f"Set-Clipboard -Value '{text.replace(chr(39), chr(39)+chr(39))}'"],
+                capture_output=True, timeout=5, shell=False,
+            )
+            pg.hotkey("ctrl", "v")
+            time.sleep(0.1)
         return f"[OK] Typed {len(text)} chars"
     except Exception as exc:
         return f"[ERROR] {type(exc).__name__}: {exc}"
