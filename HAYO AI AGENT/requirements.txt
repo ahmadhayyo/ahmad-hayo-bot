@@ -56,3 +56,8 @@ reportlab>=4.1.0
 
 # Pydantic (LangChain peer dep)
 pydantic>=2.7.0
+
+# Voice chat (STT via Groq/OpenAI Whisper, TTS via Edge TTS)
+edge-tts>=7.0.0
+groq>=0.9.0
+openai>=1.40.0

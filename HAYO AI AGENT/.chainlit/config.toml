@@ -71,8 +71,8 @@ reaction_on_message_received = false
     max_size_mb = 500
 
 [features.audio]
-    # Enable audio features
-    enabled = false
+    # Enable audio features — gives users a microphone button in the chat input
+    enabled = true
     # Sample rate of the audio
     sample_rate = 24000
 

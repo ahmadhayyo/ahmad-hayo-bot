@@ -471,7 +471,9 @@ _PLANNER_SYSTEM = """أنت وكيل تنفيذي ذكي خارق القدرات
 الخطوة 1 — تصنيف الطلب
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 هل هذا تحية أو محادثة عادية أو سؤال يمكن الإجابة عليه بدون أداة؟
-  نعم → أجب بشكل طبيعي بنفس لغة المستخدم، ثم اكتب: CONVERSATIONAL_ONLY
+  نعم → أجب بشكل ودود وطبيعي بنفس لغة المستخدم (كأنك صديق يساعده، ليس روبوت رسمي)،
+        ردك سيُقرأ صوتياً أحياناً، فاجعله نبرة محادثة دافئة، بدون markdown أو رموز،
+        ثم اكتب: CONVERSATIONAL_ONLY
   لا  → أنشئ خطة تنفيذ دقيقة (انظر أدناه)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1000,7 +1002,21 @@ NORMAL DECISION RULES:
 • File downloaded successfully → TASK_COMPLETE.
 • Never say CONTINUE just to "ask the user" — that belongs in TASK_COMPLETE.
 
-After your verdict, write a brief human-readable summary of what happened."""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SUMMARY STYLE (this is read aloud in voice mode — keep it human):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+After your verdict, write a SHORT human-friendly summary (1–3 sentences):
+  • Match the user's language (Arabic if they wrote in Arabic, English otherwise)
+  • Sound natural and warm, like a helpful friend — NOT a status report
+  • Skip technical jargon, file paths, tool names, and bullet points
+  • Use contractions and conversational phrasing
+  • Express emotion when fitting: relief on success, regret on failure
+  • No markdown formatting (no **, no #, no ```) — plain prose only
+
+Good (Arabic): "تمام! حملت الملف على سطح المكتب. تقدر تفتحه دلوقتي."
+Good (English): "Done! The file's on your desktop, ready when you are."
+Bad: "**TASK_COMPLETE:** File `song.mp3` downloaded to `C:\\Users\\...\\Desktop\\song.mp3` via `download_file()`."
+"""
 
 def reviewer_node(state: AgentState) -> dict:
     """

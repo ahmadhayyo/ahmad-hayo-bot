@@ -12,6 +12,7 @@ Features:
   • Screenshot integration for desktop capture.
 """
 from __future__ import annotations
+import asyncio
 import json
 import os
 import uuid
@@ -24,6 +25,12 @@ import chainlit as cl            # noqa: E402
 from langchain_core.messages import AIMessageChunk, HumanMessage  # noqa: E402
 from langgraph.types import Command  # noqa: E402
 from agent.workflow import compile_graph  # noqa: E402
+from core.voice_system import (  # noqa: E402
+    transcribe,
+    text_to_speech,
+    stt_available,
+    VOICES,
+)
 
 # ── Provider configuration ────────────────────────────────────────────────────
 _PROVIDER = os.getenv("MODEL_PROVIDER", "google").lower().strip()
@@ -143,7 +150,11 @@ def _extract_text_chunk(chunk: AIMessageChunk) -> str:
 
 
 async def _run_graph(input_or_command, config: dict) -> None:
-    """Stream a single graph invocation and display steps in Chainlit."""
+    """Stream a single graph invocation and display steps in Chainlit.
+
+    If voice mode is on for this session, the final assistant text is also
+    synthesized to audio and attached to the response message.
+    """
     global GRAPH
     if GRAPH is None:
         GRAPH = _get_graph()
@@ -159,6 +170,7 @@ async def _run_graph(input_or_command, config: dict) -> None:
     }
 
     current_node: str | None = None
+    final_text_buf: list[str] = []  # collect what becomes the spoken reply
 
     try:
         async for msg_chunk, metadata in GRAPH.astream(
@@ -180,6 +192,10 @@ async def _run_graph(input_or_command, config: dict) -> None:
                 text = _extract_text_chunk(msg_chunk)
                 if text:
                     await response_msg.stream_token(text)
+                    # Only buffer reviewer / planner text for TTS — worker
+                    # output is mostly tool plumbing we don't want to read aloud.
+                    if node in ("planner", "reviewer"):
+                        final_text_buf.append(text)
 
     except Exception as exc:
         await cl.Message(
@@ -189,6 +205,23 @@ async def _run_graph(input_or_command, config: dict) -> None:
         if active_step:
             await active_step.__aexit__(None, None, None)
         await response_msg.update()
+
+    # ── Voice mode: synthesize and attach audio ──────────────────────────────
+    if cl.user_session.get("voice_mode") and final_text_buf:
+        try:
+            voice_pref = cl.user_session.get("voice_name")
+            spoken_text = "".join(final_text_buf)
+            audio_bytes = await text_to_speech(spoken_text, voice=voice_pref)
+            if audio_bytes:
+                audio_elem = cl.Audio(
+                    name="reply.mp3",
+                    content=audio_bytes,
+                    auto_play=True,
+                    mime="audio/mpeg",
+                )
+                await cl.Message(content="🔊", elements=[audio_elem]).send()
+        except Exception as exc:
+            await cl.Message(content=f"⚠️ TTS error: {exc}").send()
 
 
 async def _handle_hitl_loop(config: dict) -> None:
@@ -285,6 +318,12 @@ async def on_chat_start() -> None:
     global GRAPH
     GRAPH = _get_graph()
 
+    # ── Voice defaults ────────────────────────────────────────────────────
+    cl.user_session.set("voice_mode", False)
+    cl.user_session.set("voice_name", "salma")  # ar-EG-SalmaNeural
+    cl.user_session.set("audio_buffer", bytearray())
+    cl.user_session.set("audio_mime", "audio/webm")
+
     last_session = _load_last_session()
     last_thread = last_session.get("thread_id")
     saved_provider = last_session.get("provider", _PROVIDER)
@@ -328,29 +367,111 @@ async def on_chat_start() -> None:
 
     models_display = "\n".join(available_models)
 
+    stt_ok = stt_available()
+    voice_status = "✅ جاهز" if stt_ok else "⚠️ غير متاح (يحتاج GROQ_API_KEY أو OPENAI_API_KEY صالح)"
+
     await cl.Message(
         content=(
             "# 🤖 HAYO AI Agent — وكيل ذكي خارق القدرات\n\n"
             f"**النموذج الحالي**: {_get_model_display(saved_provider)}\n"
             f"**الجلسة**: `{thread_id[:8]}…`{resume_note}\n\n"
             "---\n\n"
-            "### القدرات المتاحة:\n"
-            "🖥️ **النظام** — PowerShell, CMD, إدارة العمليات والخدمات\n"
-            "📁 **الملفات** — قراءة، كتابة، نسخ، نقل، بحث، تحميل\n"
-            "🌐 **المتصفح** — Chrome: تصفح، بحث، تحميل ملفات، ملء نماذج\n"
-            "🖱️ **سطح المكتب** — فتح تطبيقات، لقطات شاشة، تحكم بالماوس والكيبورد\n"
-            "📋 **الحافظة** — نسخ، لصق، إلحاق\n"
-            "🌍 **الشبكة** — فحص الاتصال، DNS، Wi-Fi\n"
-            "🔊 **الصوت** — تحكم بالمستوى، قراءة نص بصوت عالٍ\n"
-            "🔧 **الإصلاح** — إصلاح مشاكل النظام، التسجيل، الخدمات\n\n"
+            "### 🎙️ الدردشة الصوتية\n"
+            f"الاستماع للصوت (STT): {voice_status}\n"
+            "الرد الصوتي (TTS): ✅ جاهز — Edge TTS مجاني\n\n"
+            "**الأوامر**:\n"
+            "  • `/voice on` — تفعيل الرد الصوتي\n"
+            "  • `/voice off` — تعطيل الرد الصوتي\n"
+            "  • `/voice <اسم>` — تغيير الصوت (salma, shakir, zariyah, hamed, aria, guy)\n"
+            "  • اضغط 🎙️ في حقل الإدخال لتسجيل صوتك مباشرة\n\n"
+            "---\n\n"
+            "### القدرات:\n"
+            "🖥️ النظام · 📁 الملفات · 🌐 المتصفح · 🖱️ سطح المكتب · 📋 الحافظة\n"
+            "🌍 الشبكة · 🔊 الصوت · 📊 Office · 🎬 تحويل ملفات · 📥 تحميل متقدم\n\n"
             "---\n\n"
             "### النماذج المتاحة:\n"
             f"{models_display}\n\n"
-            "💡 **لتغيير النموذج**: اكتب `/model google` أو `/model anthropic` أو `/model openai` أو `/model deepseek` أو `/model groq`\n\n"
+            "💡 لتغيير النموذج: `/model google` | `/model anthropic` | `/model deepseek` | `/model groq`\n\n"
             "---\n\n"
             "**أخبرني بما تريد — سأنفذ كل شيء بدقة.**"
         )
     ).send()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Voice input handlers — receive audio chunks from the browser microphone
+# ─────────────────────────────────────────────────────────────────────────────
+@cl.on_audio_start
+async def on_audio_start():
+    """Called when the user presses the mic button. Reset the buffer."""
+    cl.user_session.set("audio_buffer", bytearray())
+    cl.user_session.set("audio_mime", "audio/webm")
+    return True
+
+
+@cl.on_audio_chunk
+async def on_audio_chunk(chunk: cl.InputAudioChunk):
+    """Stream raw audio bytes from the browser into our buffer."""
+    buf: bytearray = cl.user_session.get("audio_buffer")
+    if buf is None:
+        buf = bytearray()
+        cl.user_session.set("audio_buffer", buf)
+    buf.extend(chunk.data)
+    if chunk.mimeType:
+        cl.user_session.set("audio_mime", chunk.mimeType)
+
+
+@cl.on_audio_end
+async def on_audio_end(elements):
+    """
+    User finished speaking. Transcribe the buffered audio and run it through
+    the same flow as a typed message — so voice and text behave identically.
+    """
+    buf: bytearray = cl.user_session.get("audio_buffer", bytearray())
+    mime: str = cl.user_session.get("audio_mime", "audio/webm")
+    cl.user_session.set("audio_buffer", bytearray())
+
+    if not buf:
+        await cl.Message(content="⚠️ لم يُسجَّل أي صوت.").send()
+        return
+
+    # Pick a filename extension that matches the recorded MIME
+    ext = "webm"
+    if "ogg" in mime: ext = "ogg"
+    elif "wav" in mime: ext = "wav"
+    elif "mp4" in mime or "m4a" in mime: ext = "m4a"
+    elif "mpeg" in mime or "mp3" in mime: ext = "mp3"
+
+    # Show what we heard
+    await cl.Message(content="🎙️ جارٍ تحويل الصوت إلى نص...").send()
+    try:
+        transcript = await transcribe(bytes(buf), filename=f"voice.{ext}")
+    except Exception as exc:
+        await cl.Message(
+            content=(
+                f"❌ **فشل التعرف على الصوت**: {exc}\n\n"
+                "تأكد من أن لديك مفتاحاً صالحاً في `.env`:\n"
+                "  • `GROQ_API_KEY` (مجاني من https://console.groq.com)\n"
+                "  • أو `OPENAI_API_KEY`"
+            )
+        ).send()
+        return
+
+    if not transcript.strip():
+        await cl.Message(content="⚠️ لم أفهم ما قلته. حاول مرة أخرى.").send()
+        return
+
+    # Echo what we heard (and display the user message in the chat)
+    await cl.Message(content=f"🎙️ **{transcript}**", author="user").send()
+
+    # Auto-enable voice reply when user speaks
+    cl.user_session.set("voice_mode", True)
+
+    # Route through the normal text pipeline by simulating a typed message.
+    # Calling the underlying coroutine directly works because @cl.on_message
+    # registers the function but leaves the original callable accessible.
+    fake = cl.Message(content=transcript, elements=[])
+    await on_message(fake)
 
 
 @cl.on_message
@@ -424,6 +545,47 @@ async def on_message(message: cl.Message) -> None:
                     f"النموذج الحالي: {_get_model_display(current)}\n\n"
                     "للتغيير: `/model google` | `/model anthropic` | `/model openai` | `/model deepseek` | `/model groq`"
                 )
+            ).send()
+        return
+
+    # ── Voice mode command ────────────────────────────────────────────────────
+    if user_text.lower().startswith("/voice"):
+        parts = user_text.split(maxsplit=1)
+        arg = parts[1].strip().lower() if len(parts) == 2 else ""
+
+        if arg in ("on", "تفعيل", "شغل"):
+            cl.user_session.set("voice_mode", True)
+            current_voice = cl.user_session.get("voice_name", "salma")
+            await cl.Message(
+                content=f"🔊 **تم تفعيل الرد الصوتي**. الصوت الحالي: `{current_voice}`."
+            ).send()
+        elif arg in ("off", "تعطيل", "اطفي"):
+            cl.user_session.set("voice_mode", False)
+            await cl.Message(content="🔇 **تم تعطيل الرد الصوتي**.").send()
+        elif arg in VOICES:
+            cl.user_session.set("voice_name", arg)
+            cl.user_session.set("voice_mode", True)
+            await cl.Message(
+                content=f"🎙️ **تم تغيير الصوت إلى**: `{arg}` ({VOICES[arg]})\nالرد الصوتي مفعّل الآن."
+            ).send()
+        elif arg == "":
+            mode = "مفعّل ✅" if cl.user_session.get("voice_mode") else "معطّل ❌"
+            current = cl.user_session.get("voice_name", "salma")
+            voice_list = ", ".join(f"`{k}`" for k in VOICES.keys())
+            await cl.Message(
+                content=(
+                    f"🎙️ **حالة الصوت**: {mode} · الصوت: `{current}`\n\n"
+                    "**أوامر**:\n"
+                    "  • `/voice on` — تفعيل\n"
+                    "  • `/voice off` — تعطيل\n"
+                    f"  • `/voice <اسم>` — تغيير الصوت\n\n"
+                    f"**الأصوات المتاحة**: {voice_list}"
+                )
+            ).send()
+        else:
+            voice_list = ", ".join(f"`{k}`" for k in VOICES.keys())
+            await cl.Message(
+                content=f"❌ صوت غير معروف: `{arg}`\n\nالأصوات المتاحة: {voice_list}"
             ).send()
         return
 
