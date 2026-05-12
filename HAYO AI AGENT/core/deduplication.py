@@ -62,14 +62,17 @@ def is_duplicate_message(
     new_message: BaseMessage,
     recent_messages: list[BaseMessage],
     min_length: int = 50,
+    similarity_threshold: float = 0.85,
 ) -> bool:
     """
-    Check if this message is identical to a recent message.
+    Check if this message is identical or very similar to a recent message.
+    Uses both exact matching and semantic similarity.
 
     Args:
         new_message: The message to check
         recent_messages: List of recent messages to compare against (last 10)
         min_length: Minimum content length to consider (skip very short messages)
+        similarity_threshold: How similar messages must be to count as duplicate (0.0-1.0)
 
     Returns:
         True if duplicate found, False otherwise
@@ -81,18 +84,51 @@ def is_duplicate_message(
     if isinstance(new_content, str) and len(new_content) < min_length:
         return False
 
-    new_hash = _hash_content(str(new_content))
+    new_str = str(new_content).lower().strip()
+    new_hash = _hash_content(new_str)
 
-    # Check against last 10 messages
-    for msg in recent_messages[-10:]:
+    # Check against last 5 AI messages
+    for msg in recent_messages[-5:]:
         if isinstance(msg, AIMessage):
             old_content = msg.content
             if isinstance(old_content, str):
-                old_hash = _hash_content(old_content)
+                old_str = str(old_content).lower().strip()
+                old_hash = _hash_content(old_str)
+
+                # Exact match
                 if new_hash == old_hash:
                     return True
 
+                # Semantic similarity (character overlap)
+                if len(new_str) > min_length and len(old_str) > min_length:
+                    # Calculate Jaccard similarity
+                    similarity = _calculate_similarity(new_str, old_str)
+                    if similarity >= similarity_threshold:
+                        return True
+
     return False
+
+
+def _calculate_similarity(text1: str, text2: str) -> float:
+    """
+    Calculate similarity between two texts using Jaccard similarity on bigrams.
+    Returns value between 0.0 and 1.0.
+    """
+    # Create bigrams (2-char sequences)
+    def get_bigrams(text: str) -> set[str]:
+        return set(text[i:i+2] for i in range(len(text)-1))
+
+    bigrams1 = get_bigrams(text1)
+    bigrams2 = get_bigrams(text2)
+
+    if not bigrams1 or not bigrams2:
+        return 0.0
+
+    # Jaccard similarity = intersection / union
+    intersection = len(bigrams1 & bigrams2)
+    union = len(bigrams1 | bigrams2)
+
+    return intersection / union if union > 0 else 0.0
 
 
 def record_tool_call(
