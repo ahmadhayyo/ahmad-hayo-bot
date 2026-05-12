@@ -31,6 +31,11 @@ from core.voice_system import (  # noqa: E402
     stt_available,
     VOICES,
 )
+from core.conversation_store import (  # noqa: E402
+    get_conversation_store,
+    derive_title,
+    derive_summary,
+)
 
 # ── Provider configuration ────────────────────────────────────────────────────
 _PROVIDER = os.getenv("MODEL_PROVIDER", "google").lower().strip()
@@ -370,30 +375,52 @@ async def on_chat_start() -> None:
     stt_ok = stt_available()
     voice_status = "✅ جاهز" if stt_ok else "⚠️ غير متاح (يحتاج GROQ_API_KEY أو OPENAI_API_KEY صالح)"
 
+    # ── Build recent-conversations preview ────────────────────────────────────
+    history_block = ""
+    try:
+        store = get_conversation_store()
+        recent = [c for c in store.list_recent(limit=5) if c["thread_id"] != thread_id]
+        if recent:
+            import datetime as _dt
+            lines = ["### 📚 محادثاتك السابقة"]
+            for c in recent:
+                ts = _dt.datetime.fromtimestamp(c["updated_at"]).strftime("%Y-%m-%d %H:%M")
+                tid_short = c["thread_id"][:8]
+                title = c["title"] or "(بدون عنوان)"
+                lines.append(f"  • `{tid_short}` — {title}  _{ts}_")
+            lines.append("\nاكتب `/history` للقائمة الكاملة أو `/load <id>` لاستعادة محادثة.")
+            history_block = "\n".join(lines) + "\n\n---\n\n"
+    except Exception:
+        pass
+
     await cl.Message(
         content=(
             "# 🤖 HAYO AI Agent — وكيل ذكي خارق القدرات\n\n"
             f"**النموذج الحالي**: {_get_model_display(saved_provider)}\n"
             f"**الجلسة**: `{thread_id[:8]}…`{resume_note}\n\n"
             "---\n\n"
+            f"{history_block}"
             "### 🎙️ الدردشة الصوتية\n"
             f"الاستماع للصوت (STT): {voice_status}\n"
             "الرد الصوتي (TTS): ✅ جاهز — Edge TTS مجاني\n\n"
-            "**الأوامر**:\n"
-            "  • `/voice on` — تفعيل الرد الصوتي\n"
-            "  • `/voice off` — تعطيل الرد الصوتي\n"
+            "**الأوامر الصوتية**:\n"
+            "  • `/voice on` / `off` — تفعيل/تعطيل الرد الصوتي\n"
             "  • `/voice <اسم>` — تغيير الصوت (salma, shakir, zariyah, hamed, aria, guy)\n"
             "  • اضغط 🎙️ في حقل الإدخال لتسجيل صوتك مباشرة\n\n"
+            "**أوامر الذاكرة**:\n"
+            "  • `/history` — قائمة المحادثات السابقة\n"
+            "  • `/load <id>` — استعادة محادثة (مثال: `/load a1b2c3d4`)\n"
+            "  • `/new` — بدء محادثة جديدة في نفس النافذة\n\n"
             "---\n\n"
             "### القدرات:\n"
             "🖥️ النظام · 📁 الملفات · 🌐 المتصفح · 🖱️ سطح المكتب · 📋 الحافظة\n"
-            "🌍 الشبكة · 🔊 الصوت · 📊 Office · 🎬 تحويل ملفات · 📥 تحميل متقدم\n\n"
+            "🌍 الشبكة · 🔊 الصوت · 📊 Office · 🎬 تحويل ملفات · 🎵 تحميل أغاني YouTube\n\n"
             "---\n\n"
             "### النماذج المتاحة:\n"
             f"{models_display}\n\n"
             "💡 لتغيير النموذج: `/model google` | `/model anthropic` | `/model deepseek` | `/model groq`\n\n"
             "---\n\n"
-            "**أخبرني بما تريد — سأنفذ كل شيء بدقة.**"
+            "**أخبرني بما تريد — سأتذكر كل شيء قلته في هذه المحادثة.**"
         )
     ).send()
 
@@ -584,6 +611,70 @@ async def on_message(message: cl.Message) -> None:
             ).send()
         return
 
+    # ── History / past-conversations commands ─────────────────────────────────
+    if user_text.lower().startswith("/history"):
+        store = get_conversation_store()
+        items = store.list_recent(limit=15)
+        if not items:
+            await cl.Message(content="📭 لا توجد محادثات سابقة محفوظة بعد.").send()
+            return
+        lines = ["# 📚 المحادثات السابقة\n"]
+        import datetime as _dt
+        for i, c in enumerate(items, 1):
+            ts = _dt.datetime.fromtimestamp(c["updated_at"]).strftime("%Y-%m-%d %H:%M")
+            tid_short = c["thread_id"][:8]
+            title = c["title"] or "(بدون عنوان)"
+            count = c["message_count"]
+            current_marker = " ← الحالية" if c["thread_id"] == thread_id else ""
+            lines.append(f"**{i}.** `{tid_short}` — {title}{current_marker}")
+            lines.append(f"   📅 {ts}  · 💬 {count} رسالة")
+            if c["summary"]:
+                summary_short = c["summary"][:150]
+                lines.append(f"   📝 {summary_short}")
+            lines.append("")
+        lines.append("لاستعادة محادثة: `/load <id>` (الأحرف الـ 8 الأولى تكفي)")
+        await cl.Message(content="\n".join(lines)).send()
+        return
+
+    if user_text.lower().startswith("/load"):
+        parts = user_text.split(maxsplit=1)
+        if len(parts) != 2:
+            await cl.Message(content="استخدم: `/load <thread_id_prefix>`").send()
+            return
+        prefix = parts[1].strip().lower()
+        store = get_conversation_store()
+        candidates = [c for c in store.list_recent(limit=200) if c["thread_id"].startswith(prefix)]
+        if not candidates:
+            await cl.Message(content=f"❌ لم أجد محادثة تبدأ بـ `{prefix}`.").send()
+            return
+        if len(candidates) > 1:
+            await cl.Message(
+                content=f"⚠️ يوجد {len(candidates)} محادثات تبدأ بـ `{prefix}`. كن أكثر دقة."
+            ).send()
+            return
+        target = candidates[0]
+        cl.user_session.set("thread_id", target["thread_id"])
+        _save_session(target["thread_id"], cl.user_session.get("current_provider", _PROVIDER))
+        await cl.Message(
+            content=(
+                f"✅ **تم استعادة المحادثة**\n\n"
+                f"العنوان: {target['title'] or '(بدون عنوان)'}\n"
+                f"الجلسة: `{target['thread_id'][:8]}…` · {target['message_count']} رسالة\n\n"
+                "تابع المحادثة من حيث توقفت — أو اكتب طلباً جديداً."
+            )
+        ).send()
+        return
+
+    if user_text.lower() in ("/new", "/جديد"):
+        # Start a brand new conversation explicitly
+        new_thread_id = str(uuid.uuid4())
+        cl.user_session.set("thread_id", new_thread_id)
+        _save_session(new_thread_id, cl.user_session.get("current_provider", _PROVIDER))
+        await cl.Message(
+            content=f"🆕 **محادثة جديدة بدأت** — `{new_thread_id[:8]}…`"
+        ).send()
+        return
+
     # ── Voice mode command ────────────────────────────────────────────────────
     if user_text.lower().startswith("/voice"):
         parts = user_text.split(maxsplit=1)
@@ -661,12 +752,14 @@ async def on_message(message: cl.Message) -> None:
         except Exception:
             pass
 
-    # ── New task: reset state for clean execution ─────────────────────────────
-    # When user sends a new task, start a fresh thread to avoid conflicts
-    new_thread_id = str(uuid.uuid4())
-    cl.user_session.set("thread_id", new_thread_id)
-    config = {"configurable": {"thread_id": new_thread_id}}
-    _save_session(new_thread_id, cl.user_session.get("current_provider", _PROVIDER))
+    # ── Keep the same thread_id across messages ───────────────────────────────
+    # PREVIOUSLY we generated a fresh thread_id per message, which made the
+    # agent forget everything between messages. Now we reuse the session's
+    # thread_id so the LangGraph state (and full conversation history) carries
+    # over. Task boundaries are signalled by the cancel_marker in planner_node,
+    # which tells the reviewer to evaluate only the new plan.
+    # `thread_id` and `config` are already set above from cl.user_session.
+    _save_session(thread_id, cl.user_session.get("current_provider", _PROVIDER))
 
     # ── File upload processing ────────────────────────────────────────────────
     file_context = ""
@@ -695,7 +788,7 @@ async def on_message(message: cl.Message) -> None:
     await _run_graph(inputs, config)
     await _handle_hitl_loop(config)
 
-    # ── Post-run error summary ────────────────────────────────────────────────
+    # ── Post-run error summary + update conversation store ────────────────────
     try:
         final_state = await GRAPH.aget_state(config)
         errors = final_state.values.get("error_logs", [])
@@ -714,5 +807,22 @@ async def on_message(message: cl.Message) -> None:
                     + "\n".join(f"  • {e[:200]}" for e in errors[-5:])
                 )
             ).send()
+
+        # ── Persist conversation summary for cross-session memory ─────────
+        try:
+            store = get_conversation_store()
+            # Title comes from the very first user message of this thread.
+            existing = store.get(thread_id)
+            title = existing["title"] if (existing and existing["title"]) else derive_title(user_text)
+            summary = derive_summary(messages_list)
+            store.upsert(
+                thread_id=thread_id,
+                title=title,
+                summary=summary,
+                message_count=len(messages_list),
+                provider=cl.user_session.get("current_provider", _PROVIDER),
+            )
+        except Exception:
+            pass  # never let storage errors break the user-facing flow
     except Exception:
         pass

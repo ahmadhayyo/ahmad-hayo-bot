@@ -125,6 +125,11 @@ from tools.media_tools import (
     download_audio_from_url,
     download_video_from_url,
 )
+from tools.memory_tools import (
+    list_past_conversations,
+    search_past_conversations,
+    recall_conversation_details,
+)
 
 ALL_TOOLS: list[BaseTool] = [
     # ═══════════════════════════════════════════════════════════
@@ -271,6 +276,13 @@ ALL_TOOLS: list[BaseTool] = [
     download_audio_by_search,
     download_audio_from_url,
     download_video_from_url,
+
+    # ═══════════════════════════════════════════════════════════
+    # MEMORY — recall past conversations across sessions
+    # ═══════════════════════════════════════════════════════════
+    list_past_conversations,
+    search_past_conversations,
+    recall_conversation_details,
 ]
 
 TOOLS_BY_NAME: dict[str, BaseTool] = {t.name: t for t in ALL_TOOLS}

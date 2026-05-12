@@ -585,16 +585,19 @@ def planner_node(state: AgentState) -> dict:
         )
         response = AIMessage(content=content)
 
-    # Inject a hard cancel marker so Reviewer never reverts to a previous task.
-    # This message stays at the boundary between the old and new task history.
+    # Insert a soft task-boundary marker. The Reviewer should focus on the
+    # CURRENT plan, but the agent must STILL be able to read earlier messages
+    # if the new request refers back to them ("download the file we discussed",
+    # "النسخة الثانية من ذاك التقرير", etc.).
     task_id = str(uuid.uuid4())
     cancel_marker = AIMessage(
         content=(
-            "🔄 ══════════════════════════════════════════════════\n"
-            "   NEW TASK STARTED — ALL PREVIOUS TASKS CANCELLED\n"
-            "   Reviewer: evaluate ONLY the plan listed above.\n"
-            "   Ignore any unfinished work from before this line.\n"
-            "🔄 ══════════════════════════════════════════════════"
+            "─── NEW TASK BOUNDARY ───\n"
+            "Reviewer: evaluate progress against the PLAN BELOW, not any older plan.\n"
+            "Worker: earlier messages remain available as conversational context — "
+            "consult them when the user's request refers back to prior tasks "
+            "(e.g. 'the file we downloaded', 'continue from where you left off').\n"
+            "─────────────────────────"
         ),
         metadata={
             "type": "task_cancel",
@@ -1016,9 +1019,12 @@ ANTI-LOOP RULES (READ CAREFULLY — THESE OVERRIDE EVERYTHING):
 ★ If the user changed their request mid-task (e.g., from music to project) → TASK_COMPLETE
   (The old task is abandoned. The new task will be handled in the next cycle.)
 
-★ CRITICAL: If you see a message containing "NEW TASK STARTED — ALL PREVIOUS TASKS CANCELLED",
-  EVERYTHING BEFORE that line is from a previous session. Evaluate ONLY what came after it.
-  Do NOT say CONTINUE for any task that existed before the cancel marker.
+★ CRITICAL: If you see a "NEW TASK BOUNDARY" line, your VERDICT scope is the
+  plan that comes AFTER it. Do NOT say CONTINUE based on unfinished work from
+  an earlier plan. BUT — the agent's MEMORY still includes earlier messages,
+  so summaries, tool results, and downloaded files from before remain valid
+  context (e.g. "the song we just downloaded" is a real artifact, even though
+  the download task itself is closed).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 NORMAL DECISION RULES:
