@@ -359,16 +359,25 @@ _PLANNER_SYSTEM = """أنت وكيل تنفيذي ذكي خارق القدرات
    • إذا كنت تريد بيانات مختلفة، استخدم معاملات مختلفة
    • مثال: إذا استدعيت browser_click مرة، لا تستدعِها بنفس الـ selector مرة أخرى
 
-✅ أدوات التحميل المتقدمة (أفضل من download_file العادي):
+🎵 تحميل أغاني / فيديو / صوت — استخدم yt-dlp مباشرة (لا تستخدم Google!):
+   ⭐ download_audio_by_search(query, dest='desktop:'): يبحث في YouTube ويحمّل
+      أفضل جودة صوت. مثال:
+        • "حمّل أغنية بعيش لتامر حسني" → download_audio_by_search(query='بعيش تامر حسني', dest='desktop:')
+        • "نزّل Hotel California" → download_audio_by_search(query='Hotel California Eagles', dest='desktop:')
+   ⭐ download_audio_from_url(url, dest=): تحميل صوت من URL محدد (YouTube link)
+   ⭐ download_video_from_url(url, dest=): تحميل فيديو كامل من URL
+
+   ❌ لا تبحث في Google ثم تحاول النقر على مواقع mp3 — هذا سيفشل دائماً
+   ❌ لا تستخدم browser_open + browser_fill لتحميل أغنية — استخدم yt-dlp مباشرة
+
+✅ أدوات التحميل العامة (لروابط ملفات مباشرة فقط):
+   • download_file(): تحميل ملف من URL مباشر معروف
    • download_with_progress(): تحميل مع إعادة محاولة تلقائية وتتبع السرعة
    • check_url_availability(): التحقق من URL قبل التحميل
-   • get_file_hash(): حساب بصمة الملف للتحقق من السلامة
 
-✅ أدوات البحث والتحميل عبر Chrome:
-   • chrome_search_and_open(): البحث عن شيء على Google وفتح النتيجة
-   • chrome_extract_download_links(): استخراج جميع روابط التحميل من صفحة
-   • chrome_download_file_from_page(): النقر على رابط التحميل من صفحة
-   • chrome_search_media_file(): البحث عن ملف إعلامي محدد (mp3, mp4, إلخ)
+✅ أدوات Chrome (للتفاعل مع صفحات الويب فقط، ليست للتحميل):
+   • chrome_search_and_open(): فتح Google والبحث (للقراءة، ليس للتحميل)
+   • browser_get_text(): قراءة محتوى صفحة
 
 ✅ أدوات تحويل الملفات (قوية وسريعة):
    • convert_file(): تحويل بين صيغ (mp3↔wav, pdf↔docx, png↔jpg, إلخ)
@@ -705,7 +714,14 @@ def worker_node(state: AgentState) -> dict:
             "1. يجب أن تستدعي أداة واحدة على الأقل. استجابة بدون أداة = فشل.\n"
             "2. لا تقل أبداً أنك لا تستطيع. ابحث عن طريقة. دائماً.\n"
             "3. لا تطلب إذن المستخدم أو توضيح. فقط نفذ.\n"
-            "4. لا تشرح ما ستفعله — فقط استدعِ الأداة.\n\n"
+            "4. لا تشرح ما ستفعله — فقط استدعِ الأداة.\n"
+            "5. لا تكرر نفس الأداة بنفس المعاملات. إذا فشلت — جرب نهجاً مختلفاً تماماً.\n\n"
+            "🎵 تحميل أغاني/فيديو — استخدم yt-dlp مباشرة (الطريق الأقصر والأنجح):\n"
+            "   مثال: 'حمّل أغنية بعيش لتامر حسني' →\n"
+            "     download_audio_by_search(query='بعيش تامر حسني', dest='desktop:')\n"
+            "   مثال: 'حمّل فيديو من YouTube link' →\n"
+            "     download_video_from_url(url='https://youtube.com/...', dest='desktop:')\n"
+            "   ❌ لا تبحث في Google لتحميل أغاني — yt-dlp أفضل بكثير!\n\n"
             "دليل اختيار الأدوات:\n"
             "  📂 الملفات:\n"
             "    • قراءة ملف                    → read_file(path='...')\n"
@@ -713,7 +729,7 @@ def worker_node(state: AgentState) -> dict:
             "    • عرض محتويات مجلد              → list_dir(path='...')\n"
             "    • بحث عن ملفات                  → search_files(root='...', pattern='*.pdf')\n"
             "    • نسخ/نقل ملف                   → copy_file / move_file\n"
-            "    • تحميل من URL                  → download_file(url='...', dest='desktop:file.pdf')\n"
+            "    • تحميل من URL مباشر             → download_file(url='...', dest='desktop:file.pdf')\n"
             "    • إنشاء مجلد                    → make_dir(path='...')\n\n"
             "  🚀 التطبيقات:\n"
             "    • فتح تطبيق                     → open_app(name='chrome')\n"
@@ -977,8 +993,19 @@ YOU MUST START WITH EXACTLY ONE OF THESE VERDICTS:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ANTI-LOOP RULES (READ CAREFULLY — THESE OVERRIDE EVERYTHING):
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+★ If the same tool was called (or SKIPPED for duplication) 3+ times → FAILED
+  (The worker is stuck looping. Stop it now and report the failure.)
+
+★ If you see "SKIPPED: Tool ... was already called" 2+ times → FAILED with a
+  message telling the user to try a different approach (suggest the right
+  yt-dlp tool: download_audio_by_search for songs).
+
 ★ If the worker failed to call ANY tool 2+ times in recent messages → TASK_COMPLETE
   (The agent is stuck and needs user input. Do NOT say CONTINUE — it will loop forever.)
+
+★ If the worker is trying to scrape Google/sketchy mp3 sites for a song → REPLAN
+  Tell it: "Use download_audio_by_search(query='song title artist', dest='desktop:')
+  instead — that's the correct tool for downloading songs."
 
 ★ If the same "file not found" or "no results" situation appeared 2+ times → FAILED
   (Do NOT keep saying CONTINUE for a resource that clearly does not exist.)
@@ -1127,7 +1154,6 @@ def should_continue(state: AgentState) -> Literal["worker", "__end__"]:
         return "__end__"
 
     # ── Stuck-loop guard: worker repeatedly not calling tools ─────────────────
-    # Count how many of the last 8 AI messages contain "No tool called"
     no_tool_streak = sum(
         1
         for msg in messages[-8:]
@@ -1138,8 +1164,30 @@ def should_continue(state: AgentState) -> Literal["worker", "__end__"]:
         )
     )
     if no_tool_streak >= 3:
-        # Inject a stopping message so the user knows what happened
         return "__end__"
+
+    # ── Tool-loop guard: same tool being called or SKIPPED repeatedly ─────────
+    # Counts how many SKIPPED-duplicate messages we've seen recently. If 3+
+    # showed up, the worker is hopelessly stuck calling the same tool with the
+    # same args, and the duplicate detector has been kicking in over and over.
+    skipped_streak = sum(
+        1
+        for msg in messages[-12:]
+        if (
+            isinstance(msg, ToolMessage)
+            and "SKIPPED: Tool" in (msg.content or "")
+        )
+    )
+    if skipped_streak >= 3:
+        return "__end__"
+
+    # Also: if the LAST 5 tool calls all targeted the same tool, we're looping
+    tool_history = state.get("tool_call_history", [])
+    if len(tool_history) >= 5:
+        recent_names = [call.get("name", "") for call in tool_history[-5:]]
+        if len(set(recent_names)) == 1 and recent_names[0]:
+            # Same tool 5 times in a row — stop
+            return "__end__"
 
     # ── Check last reviewer AI message ───────────────────────────────────────
     for msg in reversed(messages):

@@ -120,6 +120,11 @@ from tools.replit_tools import (
     replit_run_project,
     replit_create_project_structure,
 )
+from tools.media_tools import (
+    download_audio_by_search,
+    download_audio_from_url,
+    download_video_from_url,
+)
 
 ALL_TOOLS: list[BaseTool] = [
     # ═══════════════════════════════════════════════════════════
@@ -259,6 +264,13 @@ ALL_TOOLS: list[BaseTool] = [
     replit_git_sync,
     replit_run_project,
     replit_create_project_structure,
+
+    # ═══════════════════════════════════════════════════════════
+    # MEDIA — songs / videos from YouTube etc. via yt-dlp
+    # ═══════════════════════════════════════════════════════════
+    download_audio_by_search,
+    download_audio_from_url,
+    download_video_from_url,
 ]
 
 TOOLS_BY_NAME: dict[str, BaseTool] = {t.name: t for t in ALL_TOOLS}
