@@ -375,9 +375,14 @@ _PLANNER_SYSTEM = """أنت وكيل تنفيذي ذكي خارق القدرات
    • download_with_progress(): تحميل مع إعادة محاولة تلقائية وتتبع السرعة
    • check_url_availability(): التحقق من URL قبل التحميل
 
-✅ أدوات Chrome (للتفاعل مع صفحات الويب فقط، ليست للتحميل):
-   • chrome_search_and_open(): فتح Google والبحث (للقراءة، ليس للتحميل)
+✅ أدوات المتصفح (للتفاعل مع صفحات الويب):
+   • browser_open(): فتح URL
+   • browser_fill(): ملء حقل إدخال (مواقع عادية)
+   • browser_react_fill(): ملء حقل في React/Vue/Angular SPA (Replit, GitHub, Google)
+   • browser_click(): نقر على زر/رابط
+   • browser_press(key='Enter'): إرسال نموذج بـ Enter
    • browser_get_text(): قراءة محتوى صفحة
+   ⚠️ لا تستخدم browser_eval_js للنقر أو الكتابة — استخدم browser_click/browser_press
 
 ✅ أدوات تحويل الملفات (قوية وسريعة):
    • convert_file(): تحويل بين صيغ (mp3↔wav, pdf↔docx, png↔jpg, إلخ)
@@ -426,15 +431,16 @@ _PLANNER_SYSTEM = """أنت وكيل تنفيذي ذكي خارق القدرات
   • focus_window       — جلب نافذة للأمام
 
 🌐 المتصفح (Playwright — جلسة دائمة):
-  • browser_open       — فتح URL
-  • browser_get_text   — قراءة نص من الصفحة
-  • browser_click      — النقر على عنصر
-  • browser_fill       — ملء حقل إدخال
-  • browser_press      — ضغط مفتاح
-  • browser_screenshot — لقطة شاشة للمتصفح
+  • browser_open        — فتح URL
+  • browser_get_text    — قراءة نص من الصفحة
+  • browser_click       — النقر على عنصر/زر (استخدم هذا لإرسال النماذج!)
+  • browser_fill        — ملء حقل إدخال (مواقع عادية)
+  • browser_react_fill  — ملء حقل في React/Vue/Angular SPA (Replit, GitHub, Google...)
+  • browser_press       — ضغط مفتاح (Enter لإرسال النموذج)
+  • browser_screenshot  — لقطة شاشة للمتصفح (مرة واحدة فقط لكل خطوة!)
   • browser_download_via_click — تحميل ملف بالنقر
-  • browser_eval_js    — تنفيذ JavaScript في الصفحة
-  • browser_wait_for   — انتظار ظهور عنصر
+  • browser_eval_js     — تنفيذ JavaScript (للقراءة فقط — لا تستخدمه للنقر أو الكتابة!)
+  • browser_wait_for    — انتظار ظهور عنصر
 
 🖱️ التحكم بسطح المكتب (pyautogui):
   • screen_screenshot  — لقطة شاشة لسطح المكتب بالكامل
@@ -725,6 +731,34 @@ def worker_node(state: AgentState) -> dict:
             "   مثال: 'حمّل فيديو من YouTube link' →\n"
             "     download_video_from_url(url='https://youtube.com/...', dest='desktop:')\n"
             "   ❌ لا تبحث في Google لتحميل أغاني — yt-dlp أفضل بكثير!\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "🌐 قواعد المتصفح — تسجيل الدخول وإرسال النماذج:\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "✅ تسجيل الدخول في أي موقع (Gmail، Replit، GitHub، إلخ):\n"
+            "   1. browser_open(url='https://site.com/login')\n"
+            "   2. browser_fill(selector='input[name=\"email\"]', value='user@example.com')\n"
+            "   3. browser_fill(selector='input[name=\"password\"]', value='mypassword')\n"
+            "   4. browser_press(key='Enter')  ← أو: browser_click(selector='button[type=\"submit\"]')\n"
+            "   5. browser_wait_for(selector='[class*=\"dashboard\"]', timeout_ms=8000) ← تأكيد الدخول\n\n"
+            "⚠️ قواعد حاسمة لتسجيل الدخول:\n"
+            "   ❌ لا تستخدم أبداً: browser_eval_js('document.querySelector(...).click()')\n"
+            "      → هذا لا يعمل في React/Vue/Angular (Replit, GitHub, Google...)\n"
+            "   ✅ استخدم دائماً: browser_click(selector='...') أو browser_press(key='Enter')\n"
+            "   ✅ إذا فشل browser_fill، جرب: browser_react_fill(selector='...', value='...')\n"
+            "      → browser_react_fill مخصص لمواقع SPA التي تستخدم React/Vue/Angular\n\n"
+            "✅ مثال تسجيل دخول Replit:\n"
+            "   1. browser_open(url='https://replit.com/login')\n"
+            "   2. browser_fill(selector='input[name=\"username\"]', value='email@gmail.com')\n"
+            "   3. browser_fill(selector='input[name=\"password\"]', value='كلمة_السر')\n"
+            "   4. browser_press(key='Enter')\n"
+            "   5. browser_wait_for(selector='.replit-ui-theme-root', timeout_ms=10000)\n\n"
+            "✅ مثال تسجيل دخول Gmail:\n"
+            "   1. browser_open(url='https://mail.google.com')\n"
+            "   2. browser_fill(selector='input[type=\"email\"]', value='user@gmail.com')\n"
+            "   3. browser_press(key='Enter')\n"
+            "   4. browser_wait_for(selector='input[type=\"password\"]', timeout_ms=5000)\n"
+            "   5. browser_fill(selector='input[type=\"password\"]', value='كلمة_السر')\n"
+            "   6. browser_press(key='Enter')\n\n"
             "دليل اختيار الأدوات:\n"
             "  📂 الملفات:\n"
             "    • قراءة ملف                    → read_file(path='...')\n"
@@ -748,9 +782,11 @@ def worker_node(state: AgentState) -> dict:
             "  🌐 المتصفح:\n"
             "    • فتح صفحة                      → browser_open(url='https://...')\n"
             "    • قراءة نص الصفحة               → browser_get_text()\n"
-            "    • نقر على عنصر                  → browser_click(selector='...')\n"
-            "    • ملء حقل                       → browser_fill(selector='...', value='...')\n"
-            "    • لقطة شاشة المتصفح             → browser_screenshot()\n\n"
+            "    • نقر على عنصر/زر               → browser_click(selector='button[type=\"submit\"]')\n"
+            "    • ملء حقل عادي                  → browser_fill(selector='input[name=x]', value='y')\n"
+            "    • ملء حقل React/Vue/Angular     → browser_react_fill(selector='...', value='...')\n"
+            "    • ضغط مفتاح (مثل Enter)         → browser_press(key='Enter')\n"
+            "    • لقطة شاشة المتصفح (مرة واحدة)→ browser_screenshot()\n\n"
             "  💻 الأوامر:\n"
             "    • PowerShell                    → run_powershell(command='...')\n"
             "    • CMD                           → run_cmd(command='...')\n\n"
@@ -834,9 +870,34 @@ def worker_node(state: AgentState) -> dict:
 
             # ── Check for duplicate tool call ────────────────────────────────
             if is_duplicate_tool_call(tool_name, tool_args, tool_call_history, recent_count=2):
+                # Give the model actionable guidance based on which tool is looping
+                if tool_name in ("browser_screenshot", "screen_screenshot"):
+                    skip_hint = (
+                        "You already have the screenshot from the previous step. "
+                        "Do NOT take another screenshot — instead, act on what you already know. "
+                        "If the form didn't submit, use browser_press(key='Enter') or "
+                        "browser_click(selector='button[type=\"submit\"]')."
+                    )
+                elif tool_name == "browser_get_text":
+                    skip_hint = (
+                        "You already read the page text. "
+                        "Do NOT read it again — act on the content you already have. "
+                        "If login failed, try browser_react_fill() or browser_press(key='Enter')."
+                    )
+                elif tool_name in ("browser_fill", "browser_react_fill"):
+                    skip_hint = (
+                        "You already filled this field. "
+                        "Move to the next step: use browser_press(key='Enter') or "
+                        "browser_click(selector='button[type=\"submit\"]') to submit."
+                    )
+                else:
+                    skip_hint = (
+                        "Avoid repeating the same tool call. "
+                        "Try a completely different approach or tool."
+                    )
                 result = (
-                    f"⏭️ SKIPPED: Tool '{tool_name}' with identical args was already called in the last 2 iterations. "
-                    f"Avoid repeating the same tool call. If you need different data, use different arguments."
+                    f"⏭️ SKIPPED: Tool '{tool_name}' with identical args was already called recently. "
+                    f"{skip_hint}"
                 )
                 new_messages.append(ToolMessage(content=result, tool_call_id=tool_id))
                 continue
@@ -1173,9 +1234,8 @@ def should_continue(state: AgentState) -> Literal["worker", "__end__"]:
         return "__end__"
 
     # ── Tool-loop guard: same tool being called or SKIPPED repeatedly ─────────
-    # Counts how many SKIPPED-duplicate messages we've seen recently. If 3+
-    # showed up, the worker is hopelessly stuck calling the same tool with the
-    # same args, and the duplicate detector has been kicking in over and over.
+    # Counts how many SKIPPED-duplicate messages we've seen recently.
+    # Threshold lowered to 2 (was 3) — catches loops earlier.
     skipped_streak = sum(
         1
         for msg in messages[-12:]
@@ -1184,15 +1244,16 @@ def should_continue(state: AgentState) -> Literal["worker", "__end__"]:
             and "SKIPPED: Tool" in (msg.content or "")
         )
     )
-    if skipped_streak >= 3:
+    if skipped_streak >= 2:
         return "__end__"
 
-    # Also: if the LAST 5 tool calls all targeted the same tool, we're looping
+    # Also: if the LAST 3 tool calls all targeted the same tool, we're looping.
+    # Threshold lowered to 3 (was 5) — catches browser_screenshot loops sooner.
     tool_history = state.get("tool_call_history", [])
-    if len(tool_history) >= 5:
-        recent_names = [call.get("name", "") for call in tool_history[-5:]]
+    if len(tool_history) >= 3:
+        recent_names = [call.get("name", "") for call in tool_history[-3:]]
         if len(set(recent_names)) == 1 and recent_names[0]:
-            # Same tool 5 times in a row — stop
+            # Same tool 3 times in a row — stop
             return "__end__"
 
     # ── Check last reviewer AI message ───────────────────────────────────────

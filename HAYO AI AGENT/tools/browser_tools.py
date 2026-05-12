@@ -16,6 +16,7 @@ Closing happens at agent shutdown via close_browser().
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import threading
 from typing import Annotated, Optional
 
@@ -274,6 +275,77 @@ def browser_wait_for(
         return f"[OK] Found '{selector}'"
     except Exception as exc:
         return f"[ERROR] {type(exc).__name__}: {exc}"
+
+
+@tool
+def browser_react_fill(
+    selector: Annotated[str, "CSS selector for the input element."],
+    value: Annotated[str, "Value to set in the input."],
+) -> str:
+    """
+    Fill a React / Vue / Angular controlled input using React's internal setter.
+
+    Use this as a fallback when browser_fill does NOT trigger SPA state updates
+    (e.g. Replit, GitHub, Google — any site built with a modern JS framework
+    where the input stays empty or the form validation doesn't activate).
+
+    Internally this:
+      1. Uses the native HTMLInputElement value setter (bypasses React read-only guard)
+      2. Dispatches 'input' and 'change' events with bubbles=true
+         (React's synthetic event system listens to these)
+      3. Falls back to Playwright's fill() if the JS injection fails
+    """
+
+    async def _do():
+        await _ensure_browser()
+
+        # Primary: React-aware value setter + synthetic events
+        js = f"""
+        (function() {{
+            var sel = {_json.dumps(selector)};
+            var val = {_json.dumps(value)};
+            var el  = document.querySelector(sel);
+            if (!el) return 'ELEMENT_NOT_FOUND:' + sel;
+
+            // 1. Set value via the native setter so React's fiber sees the change
+            var nativeSetter = Object.getOwnPropertyDescriptor(
+                window.HTMLInputElement.prototype, 'value'
+            ).set;
+            nativeSetter.call(el, val);
+
+            // 2. Trigger events React listens to
+            el.dispatchEvent(new Event('input',  {{bubbles: true, cancelable: true}}));
+            el.dispatchEvent(new Event('change', {{bubbles: true, cancelable: true}}));
+            el.dispatchEvent(new KeyboardEvent('keyup', {{bubbles: true}}));
+
+            return 'OK:' + val.length + ' chars set';
+        }})()
+        """
+        result = await _page.evaluate(js)
+        if result and result.startswith("ELEMENT_NOT_FOUND"):
+            raise ValueError(result)
+
+        # 3. Playwright focus to make sure cursor is in the field
+        try:
+            await _page.focus(selector, timeout=3000)
+        except Exception:
+            pass  # Non-fatal if element already focused
+
+        return result
+
+    try:
+        res = _run(_do())
+        return f"[OK] React-filled '{selector}': {res}"
+    except Exception as exc:
+        # Final fallback: standard Playwright fill
+        try:
+            async def _fallback():
+                await _ensure_browser()
+                await _page.fill(selector, value, timeout=10000)
+            _run(_fallback())
+            return f"[OK] Filled '{selector}' via fallback (playwright fill)"
+        except Exception as exc2:
+            return f"[ERROR] browser_react_fill failed: {exc} | fallback: {exc2}"
 
 
 @tool

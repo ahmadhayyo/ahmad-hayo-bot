@@ -64,12 +64,16 @@ def _add_messages_with_limit(left: list[BaseMessage], right: list[BaseMessage] |
     Custom reducer for messages that enforces a maximum limit AND tool-pair safety.
 
     Strategy:
-    - If right is significantly larger than left, treat as authoritative replacement
-      (this is how all our nodes work — they return the full sanitized message list
-      plus their additions, NOT just deltas).
-    - Otherwise, append (standard LangGraph behavior).
+    - Nodes return the FULL message list (history + their additions), not just deltas.
+    - If right looks like a complete replacement (larger than left, OR contains a
+      "Context summary" marker from _summarize_old_messages), use right as-is.
+    - Otherwise append (standard LangGraph behavior for delta updates).
     - Always apply tool-pair sanitization at the end to prevent API 400 errors.
     - Keep first 50 (summaries) + last (max-50) recent if over the limit.
+
+    CRITICAL: The "Context summary" check fixes the summarization bug where
+    _summarize_old_messages shrinks 300 msgs → 21, causing right(23) < left(300)
+    and the naive heuristic appending instead of replacing.
     """
     # Normalize right to list
     if isinstance(right, BaseMessage):
@@ -80,9 +84,17 @@ def _add_messages_with_limit(left: list[BaseMessage], right: list[BaseMessage] |
     if not right:
         return _sanitize_tool_pairs(list(left))
 
-    # Replacement heuristic: nodes return the full message list, not just deltas.
-    # If right >= left in length and right looks like a superset, use right as-is.
-    if len(right) >= len(left) and len(right) > 2:
+    # Detect if this is an authoritative replacement (vs a delta append).
+    # Case 1: right is larger — normal growth, clearly a replacement.
+    # Case 2: right contains a "Context summary" — _summarize_old_messages ran
+    #         and condensed old messages; the smaller right IS the full history.
+    has_summary = any(
+        isinstance(m, AIMessage) and "Context summary" in str(m.content)
+        for m in right
+    )
+    is_replacement = (len(right) >= len(left) and len(right) > 2) or (has_summary and len(right) > 2)
+
+    if is_replacement:
         combined = list(right)
     else:
         combined = list(left) + list(right)

@@ -20,6 +20,27 @@ def _hash_content(content: str) -> str:
     return hashlib.md5(content.encode()).hexdigest()
 
 
+def _normalize_args(args: dict) -> dict:
+    """
+    Strip falsy / default-equivalent values from args before comparison.
+
+    Many tools have optional args with defaults (e.g. browser_screenshot has
+    path='' and full_page=False).  When the LLM omits those args it sends {},
+    but when it explicitly passes the default values it sends {"path": "",
+    "full_page": false}.  Both calls are functionally identical, so after
+    normalization both become {} and the duplicate-check fires correctly.
+
+    We ONLY strip values that are clearly "no-op" defaults:
+      None, empty string "", False, 0, empty list []
+    We keep meaningful falsy values via a whitelist approach where needed.
+    """
+    return {
+        k: v
+        for k, v in args.items()
+        if v is not None and v != "" and v is not False and v != 0 and v != []
+    }
+
+
 def is_duplicate_tool_call(
     tool_name: str,
     tool_args: dict,
@@ -27,11 +48,16 @@ def is_duplicate_tool_call(
     recent_count: int = 2,
 ) -> bool:
     """
-    Check if this tool has been called with identical args in the last N calls.
+    Check if this tool has been called with functionally-identical args in the
+    last N calls.
+
+    Uses _normalize_args() so that explicit defaults (path='', full_page=False)
+    are treated as equivalent to omitted args ({}).  This is the key fix for
+    browser_screenshot looping: {} and {"path":"","full_page":false} now match.
 
     Args:
         tool_name: Name of the tool being called
-        tool_args: Arguments being passed
+        tool_args: Arguments being passed (raw from LLM)
         tool_history: List of recent tool calls (from state)
         recent_count: How many recent calls to check (default 2)
 
@@ -41,15 +67,19 @@ def is_duplicate_tool_call(
     if not tool_history:
         return False
 
+    # Normalize the incoming args once
+    norm_new = _normalize_args(tool_args)
+
     # Get the last N tool calls
     recent_calls = tool_history[-recent_count:]
 
     for call in recent_calls:
         if call.get("name") == tool_name:
-            # Compare args (normalize JSON for comparison)
+            # Compare normalized args (strips empty-string / False / None defaults)
             try:
-                saved_args = call.get("args", {})
-                if json.dumps(tool_args, sort_keys=True) == json.dumps(saved_args, sort_keys=True):
+                saved_args  = call.get("args", {})
+                norm_saved  = _normalize_args(saved_args)
+                if json.dumps(norm_new, sort_keys=True) == json.dumps(norm_saved, sort_keys=True):
                     return True
             except (TypeError, ValueError):
                 # If we can't compare, consider it different

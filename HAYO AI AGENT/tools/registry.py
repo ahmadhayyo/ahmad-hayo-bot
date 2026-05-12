@@ -25,6 +25,7 @@ from tools.browser_tools import (
     browser_get_text,
     browser_open,
     browser_press,
+    browser_react_fill,
     browser_screenshot,
     browser_wait_for,
 )
@@ -179,6 +180,7 @@ ALL_TOOLS: list[BaseTool] = [
     browser_get_text,
     browser_click,
     browser_fill,
+    browser_react_fill,
     browser_press,
     browser_screenshot,
     browser_download_via_click,
