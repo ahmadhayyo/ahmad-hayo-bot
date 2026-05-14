@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent / ".env", override=True)  # must run BEFORE agent imports read env vars
 
 import chainlit as cl            # noqa: E402
-from langchain_core.messages import AIMessageChunk, HumanMessage, SystemMessage as _SysMsg  # noqa: E402
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage as _SysMsg  # noqa: E402
 from langgraph.types import Command  # noqa: E402
 from agent.workflow import compile_graph  # noqa: E402
 from core.voice_system import (  # noqa: E402
@@ -205,8 +205,17 @@ def _extract_text_chunk(chunk: AIMessageChunk) -> str:
 async def _run_graph(input_or_command, config: dict) -> None:
     """Stream a single graph invocation and display steps in Chainlit.
 
-    If voice mode is on for this session, the final assistant text is also
-    synthesized to audio and attached to the response message.
+    Deduplication strategy:
+      stream_mode="messages" emits both streaming LLM chunks (AIMessageChunk)
+      AND final state-update messages (AIMessage).  To prevent the user from
+      seeing each response twice, we track which nodes have already emitted
+      streaming chunks and skip their final AIMessage state-update.
+
+    Token filtering strategy:
+      Internal markers (CONVERSATIONAL_ONLY, TASK_COMPLETE, etc.) can arrive as
+      individual streaming tokens ("CON", "V", "ERS"...).  We accumulate text
+      in a line buffer and only filter/emit complete lines, ensuring multi-word
+      markers are caught reliably.
     """
     global GRAPH
     if GRAPH is None:
@@ -225,6 +234,26 @@ async def _run_graph(input_or_command, config: dict) -> None:
     current_node: str | None = None
     final_text_buf: list[str] = []  # collect what becomes the spoken reply
 
+    # ── Deduplication: track nodes that already streamed LLM chunks ────────
+    _nodes_with_chunks: set[str] = set()
+
+    # ── Line buffer for token-level filtering ─────────────────────────────
+    _line_buf: list[str] = []
+
+    async def _flush_line_buf(for_node: str | None) -> None:
+        """Filter accumulated text and stream clean content to the user."""
+        if not _line_buf:
+            return
+        accumulated = "".join(_line_buf)
+        _line_buf.clear()
+        if not accumulated:
+            return
+        filtered = _filter_internal_tokens(accumulated)
+        if filtered:
+            await response_msg.stream_token(filtered)
+            if for_node in ("planner", "reviewer"):
+                final_text_buf.append(filtered)
+
     try:
         async for msg_chunk, metadata in GRAPH.astream(
             input_or_command, config=config, stream_mode="messages"
@@ -233,6 +262,7 @@ async def _run_graph(input_or_command, config: dict) -> None:
 
             # Show / switch step indicator when the active node changes
             if node and node != current_node and node in NODE_LABELS:
+                await _flush_line_buf(current_node)
                 if active_step:
                     await active_step.__aexit__(None, None, None)
                 emoji, label = NODE_LABELS[node]
@@ -244,23 +274,52 @@ async def _run_graph(input_or_command, config: dict) -> None:
             if isinstance(msg_chunk, _SysMsg):
                 continue
 
-            # Stream text tokens — filter internal control markers
-            if hasattr(msg_chunk, "content"):
+            # Skip HumanMessage re-emissions from state updates
+            if isinstance(msg_chunk, HumanMessage):
+                continue
+
+            # ── Streaming LLM chunks (AIMessageChunk) ─────────────────────
+            if isinstance(msg_chunk, AIMessageChunk):
+                _nodes_with_chunks.add(node)
+                text = _extract_text_chunk(msg_chunk)
+                if text:
+                    _line_buf.append(text)
+                    # Flush complete lines through the filter immediately
+                    accumulated = "".join(_line_buf)
+                    if "\n" in accumulated:
+                        complete, remainder = accumulated.rsplit("\n", 1)
+                        _line_buf.clear()
+                        if remainder:
+                            _line_buf.append(remainder)
+                        filtered = _filter_internal_tokens(complete + "\n")
+                        if filtered:
+                            await response_msg.stream_token(filtered)
+                            if node in ("planner", "reviewer"):
+                                final_text_buf.append(filtered)
+                continue
+
+            # ── Full AIMessage from state update ──────────────────────────
+            #  Skip if this node already streamed chunks (would be a duplicate).
+            #  Only show messages from nodes that did NOT call the LLM
+            #  (e.g., error messages created directly by the node).
+            if isinstance(msg_chunk, AIMessage):
+                if node in _nodes_with_chunks:
+                    continue
                 text = _extract_text_chunk(msg_chunk)
                 if text:
                     filtered = _filter_internal_tokens(text)
                     if filtered:
                         await response_msg.stream_token(filtered)
-                        # Only buffer reviewer / planner text for TTS — worker
-                        # output is mostly tool plumbing we don't want to read aloud.
                         if node in ("planner", "reviewer"):
                             final_text_buf.append(filtered)
+                continue
 
     except Exception as exc:
         await cl.Message(
             content=f"❌ **خطأ في التنفيذ**: {type(exc).__name__}: {exc}"
         ).send()
     finally:
+        await _flush_line_buf(current_node)
         if active_step:
             await active_step.__aexit__(None, None, None)
         await response_msg.update()
