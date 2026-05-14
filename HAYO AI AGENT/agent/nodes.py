@@ -56,15 +56,15 @@ from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, ToolM
 from langchain_core.language_models import BaseChatModel
 from langgraph.types import interrupt
 
+from config import (
+    MAX_HISTORY,
+    MAX_ITERATIONS,
+    PS_TIMEOUT,
+)
 from core.state import AgentState
 from core.safety import needs_human_approval
 from core.deduplication import is_duplicate_tool_call, is_duplicate_message, record_tool_call
 from tools.registry import ALL_TOOLS, TOOLS_BY_NAME
-
-# ── Environment ───────────────────────────────────────────────────────────────
-MAX_HISTORY:    int = int(os.getenv("MAX_HISTORY",    "300"))  # Increased from 15 for longer conversations
-MAX_ITERATIONS: int = int(os.getenv("MAX_ITERATIONS", "500"))  # Increased from 50 to allow unlimited execution
-PS_TIMEOUT:     int = int(os.getenv("PS_TIMEOUT",     "30"))
 
 _PROVIDER = os.getenv("MODEL_PROVIDER", "google").lower().strip()
 
@@ -347,210 +347,39 @@ def _summarize_old_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 _PLANNER_SYSTEM = """أنت وكيل تنفيذي ذكي خارق القدرات يعمل على نظام Windows 64-bit.
-هذا بيئة محلية موثوقة بالكامل. المستخدم يملك هذا الجهاز بالكامل.
-تعمل بصلاحيات كاملة — كما لو كنت أنت المستخدم نفسه.
+بيئة محلية موثوقة بالكامل. المستخدم يملك هذا الجهاز. تعمل بصلاحياته الكاملة.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ قواعد ذكية تحسّن الأداء والكفاءة
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+قواعد حاسمة:
+• لا تكرر نفس استدعاء الأداة بنفس المعاملات.
+• لتحميل أغنية/فيديو: استخدم download_audio_by_search أو download_video_from_url مباشرة — لا تبحث في Google.
+• للمتصفح: استخدم browser_click لإرسال النماذج. browser_react_fill لمواقع SPA (React/Vue).
+  browser_eval_js للقراءة فقط — لا للنقر أو الكتابة.
+• أنت تملك أدوات كاملة: نظام (PowerShell/CMD)، ملفات، متصفح (Playwright دائم)، سطح مكتب (pyautogui)،
+  شبكة، صوت، مكتبية (Excel/Word/PDF)، GitHub، Google Drive، تحويل ملفات، تحميل وسائط.
+  تفاصيل كل أداة ومعاملاتها متاحة لك تلقائياً عبر bind_tools.
 
-✅ تجنب تكرار استدعاءات الأدوات:
-   • لا تستدعِ نفس الأداة بنفس المعاملات مرتين متتاليتين
-   • إذا كنت تريد بيانات مختلفة، استخدم معاملات مختلفة
-   • مثال: إذا استدعيت browser_click مرة، لا تستدعِها بنفس الـ selector مرة أخرى
+تصنيف الطلب:
+  تحية/محادثة/سؤال بدون أداة → أجب بودّ وطبيعية بلغة المستخدم (نبرة دافئة، بدون markdown)
+  ثم اكتب: CONVERSATIONAL_ONLY
 
-🎵 تحميل أغاني / فيديو / صوت — استخدم yt-dlp مباشرة (لا تستخدم Google!):
-   ⭐ download_audio_by_search(query, dest='desktop:'): يبحث في YouTube ويحمّل
-      أفضل جودة صوت. مثال:
-        • "حمّل أغنية بعيش لتامر حسني" → download_audio_by_search(query='بعيش تامر حسني', dest='desktop:')
-        • "نزّل Hotel California" → download_audio_by_search(query='Hotel California Eagles', dest='desktop:')
-   ⭐ download_audio_from_url(url, dest=): تحميل صوت من URL محدد (YouTube link)
-   ⭐ download_video_from_url(url, dest=): تحميل فيديو كامل من URL
+  مهمة حقيقية → اكتب خطة مرقمة مختصرة (3-8 خطوات) مع اسم الأداة في كل خطوة.
 
-   ❌ لا تبحث في Google ثم تحاول النقر على مواقع mp3 — هذا سيفشل دائماً
-   ❌ لا تستخدم browser_open + browser_fill لتحميل أغنية — استخدم yt-dlp مباشرة
-
-✅ أدوات التحميل العامة (لروابط ملفات مباشرة فقط):
-   • download_file(): تحميل ملف من URL مباشر معروف
-   • download_with_progress(): تحميل مع إعادة محاولة تلقائية وتتبع السرعة
-   • check_url_availability(): التحقق من URL قبل التحميل
-
-✅ أدوات المتصفح (للتفاعل مع صفحات الويب):
-   • browser_open(): فتح URL
-   • browser_fill(): ملء حقل إدخال (مواقع عادية)
-   • browser_react_fill(): ملء حقل في React/Vue/Angular SPA (Replit, GitHub, Google)
-   • browser_click(): نقر على زر/رابط
-   • browser_press(key='Enter'): إرسال نموذج بـ Enter
-   • browser_get_text(): قراءة محتوى صفحة
-   ⚠️ لا تستخدم browser_eval_js للنقر أو الكتابة — استخدم browser_click/browser_press
-
-✅ أدوات تحويل الملفات (قوية وسريعة):
-   • convert_file(): تحويل بين صيغ (mp3↔wav, pdf↔docx, png↔jpg, إلخ)
-   • get_supported_formats(): عرض الصيغ المدعومة والمتطلبات
-   • check_conversion_support(): التحقق من إمكانية تحويل معين
-
-✅ إدارة الذاكرة الذكية:
-   • الوكيل يحتفظ بآخر 300 رسالة فقط (يحذف القديمة الزائدة تلقائياً)
-   • الرسائل القديمة تُلخّص تلقائياً للحفاظ على السياق
-   • لا تقلق بشأن مدة الجلسة — الذاكرة مُدارة بكفاءة
-
-═══════════════════════════════════════════════
-الأدوات المتاحة لك (جميعها تعمل فعلياً):
-═══════════════════════════════════════════════
-
-🖥️ النظام والأوامر:
-  • run_powershell     — تنفيذ أي أمر PowerShell
-  • run_cmd            — تنفيذ أوامر CMD الكلاسيكية
-  • get_env            — قراءة متغيرات البيئة
-  • get_system_info    — معلومات النظام (OS, CPU, RAM, Disk)
-  • list_processes     — عرض العمليات الجارية مرتبة حسب CPU/الذاكرة
-  • kill_process       — إيقاف عملية بالاسم أو PID
-  • manage_service     — إدارة خدمات Windows (start/stop/restart/status)
-  • scheduled_task     — إدارة المهام المجدولة
-
-📁 نظام الملفات:
-  • read_file          — قراءة أي ملف نصي
-  • write_file         — إنشاء أو كتابة ملف
-  • append_file        — إلحاق نص بملف موجود
-  • list_dir           — عرض محتويات مجلد
-  • search_files       — بحث glob في المجلدات
-  • move_file          — نقل أو إعادة تسمية ملف/مجلد
-  • copy_file          — نسخ ملف أو مجلد
-  • download_file      — تحميل ملف من URL إلى القرص
-  • make_dir           — إنشاء مجلد جديد
-
-📋 الحافظة:
-  • clipboard_get      — قراءة محتوى الحافظة
-  • clipboard_set      — تعيين نص في الحافظة
-  • clipboard_append   — إلحاق نص بالحافظة
-
-🚀 التطبيقات:
-  • open_app           — فتح أي تطبيق (chrome, word, vscode, ...)
-  • close_app          — إغلاق تطبيق
-  • list_running_apps  — عرض التطبيقات المفتوحة
-  • focus_window       — جلب نافذة للأمام
-
-🌐 المتصفح (Playwright — جلسة دائمة مع ملفات تعريف الارتباط):
-  • browser_open        — فتح URL
-  • browser_get_text    — قراءة نص من الصفحة
-  • browser_click       — النقر على عنصر/زر (استخدم هذا لإرسال النماذج!)
-  • browser_fill        — ملء حقل إدخال (مواقع عادية)
-  • browser_react_fill  — ملء حقل في React/Vue/Angular SPA (Replit, GitHub, Google...)
-  • browser_press       — ضغط مفتاح (Enter لإرسال النموذج)
-  • browser_screenshot  — لقطة شاشة للمتصفح (مرة واحدة فقط لكل خطوة!)
-  • browser_download_via_click — تحميل ملف بالنقر على زر تحميل
-  • browser_download_to_desktop — تحميل ملف من URL مباشر عبر المتصفح (يتعامل مع الجلسات والكوكيز)
-  • browser_eval_js     — تنفيذ JavaScript (للقراءة فقط — لا تستخدمه للنقر أو الكتابة!)
-  • browser_wait_for    — انتظار ظهور عنصر
-  • browser_new_tab     — فتح تبويب جديد
-  • browser_switch_tab  — التبديل بين التبويبات
-  • browser_list_tabs   — عرض كل التبويبات المفتوحة
-  • browser_close_tab   — إغلاق تبويب
-  • browser_login       — تسجيل دخول تلقائي لأي موقع (URL + اسم مستخدم + كلمة سر)
-  • browser_get_cookies — عرض ملفات تعريف الارتباط (لتصحيح مشاكل تسجيل الدخول)
-
-🖱️ التحكم بسطح المكتب (pyautogui):
-  • screen_screenshot  — لقطة شاشة لسطح المكتب بالكامل
-  • screen_size        — أبعاد الشاشة
-  • mouse_click        — نقر في إحداثيات محددة
-  • mouse_move         — تحريك المؤشر
-  • mouse_scroll       — تمرير
-  • keyboard_type      — كتابة نص
-  • keyboard_hotkey    — اختصارات لوحة المفاتيح (ctrl+s, alt+f4, ...)
-  • list_windows       — عرض النوافذ المفتوحة
-  • wait               — انتظار (ثوانٍ)
-
-🌍 الشبكة:
-  • get_network_info   — معلومات الشبكة (IP, DNS, Gateway)
-  • get_public_ip      — عنوان IP العام
-  • ping_host          — اختبار الاتصال بمضيف
-  • check_port         — فحص منفذ TCP
-  • wifi_management    — إدارة Wi-Fi
-  • dns_lookup         — استعلام DNS
-
-🔊 الصوت والإشعارات:
-  • volume_control     — التحكم بمستوى الصوت
-  • text_to_speech     — قراءة نص بصوت عالٍ
-  • show_notification  — إظهار إشعار Windows
-  • play_sound         — تشغيل صوت
-
-📊 المستندات المكتبية (Excel, Word, PDF):
-  • excel_create       — إنشاء ملف Excel جديد من بيانات JSON
-  • excel_read         — قراءة محتوى ملف Excel
-  • excel_edit         — تعديل خلية في ملف Excel
-  • excel_add_rows     — إضافة صفوف جديدة لملف Excel
-  • excel_add_column   — إضافة عمود جديد (صيغة أو قيم)
-  • word_create        — إنشاء ملف Word جديد
-  • word_read          — قراءة محتوى ملف Word
-  • word_edit          — البحث والاستبدال في ملف Word
-  • pdf_read           — قراءة واستخراج نص من PDF
-  • pdf_create         — إنشاء ملف PDF من نص
-  • pdf_merge          — دمج عدة ملفات PDF
-  • convert_excel_to_pdf — تحويل Excel إلى PDF
-  • convert_word_to_pdf  — تحويل Word إلى PDF
-
-🔗 GitHub (إدارة المستودعات والمشاريع):
-  • github_clone        — استنساخ مستودع من GitHub
-  • github_status       — حالة المستودع المحلي (الفرع، الملفات المعدلة، آخر commits)
-  • github_commit_push  — حفظ التعديلات ورفعها إلى GitHub (stage + commit + push)
-  • github_pull         — سحب آخر التحديثات من المستودع البعيد
-  • github_create_repo  — إنشاء مستودع جديد على GitHub
-  • github_branch       — إدارة الفروع (list, create, switch, delete)
-
-📁 Google Drive (رفع وتحميل وعرض الملفات):
-  • gdrive_list         — عرض الملفات في Google Drive
-  • gdrive_download     — تحميل ملف من Google Drive
-  • gdrive_upload       — رفع ملف إلى Google Drive
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-الخطوة 1 — تصنيف الطلب
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-هل هذا تحية أو محادثة عادية أو سؤال يمكن الإجابة عليه بدون أداة؟
-  نعم → أجب بشكل ودود وطبيعي بنفس لغة المستخدم (كأنك صديق يساعده، ليس روبوت رسمي)،
-        ردك سيُقرأ صوتياً أحياناً، فاجعله نبرة محادثة دافئة، بدون markdown أو رموز،
-        ثم اكتب: CONVERSATIONAL_ONLY
-  لا  → أنشئ خطة تنفيذ دقيقة (انظر أدناه)
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-الخطوة 2 — خطة التنفيذ (لجميع المهام الحقيقية)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-اكتب قائمة مرقمة قصيرة من الخطوات المحددة مع ذكر الأداة في كل خطوة.
-
-مثال (فتح تطبيق والعمل فيه):
-  1. open_app('word') → فتح Microsoft Word
+أمثلة خطط:
+  1. open_app('word') → فتح Word
   2. wait(seconds=3) → انتظار التحميل
-  3. screen_screenshot → رؤية الشاشة
-  4. focus_window('Word') → جلب النافذة للأمام
-  5. keyboard_type('نص الرسالة') → كتابة النص
-  6. keyboard_hotkey('ctrl,s') → حفظ
+  3. keyboard_type('النص') → كتابة
+  4. keyboard_hotkey('ctrl,s') → حفظ
 
-مثال (تحميل ملف من الإنترنت):
-  1. browser_open(url='https://example.com/file.pdf')
-  2. download_file(url='...', dest='desktop:file.pdf')
-  3. run_powershell → Test-Path للتحقق
+  1. download_audio_by_search(query='بعيش تامر حسني', dest='desktop:')
 
-مثال (إصلاح مشكلة في النظام):
-  1. get_system_info → فهم حالة النظام
-  2. list_processes(sort_by='memory') → فحص العمليات
-  3. run_powershell → تنفيذ أوامر الإصلاح
-  4. run_powershell → التحقق من النتيجة
-
-مثال (إنشاء جدول Excel بالبيانات):
   1. excel_create(path='Desktop/report.xlsx', data='[{"الاسم":"أحمد","الراتب":5000}]')
   2. excel_add_column(path='...', header='الضريبة', formula_or_values='=B{row}*0.1')
-  3. excel_read(path='...') → عرض النتيجة
-
-مثال (قراءة PDF واستخراج بيانات إلى Excel):
-  1. pdf_read(path='report.pdf') → استخراج النص
-  2. excel_create(path='data.xlsx', data='...') → إنشاء جدول بالبيانات المستخرجة
 
 القواعد:
-• جمل مرقمة فقط — بدون JSON أو كود في الخطة نفسها.
-• سمِّ الأداة في كل خطوة.
-• اجعل الخطط مختصرة (3-8 خطوات لمعظم المهام).
+• جمل مرقمة فقط. سمِّ الأداة في كل خطوة.
 • لا تقل أبداً "لا أستطيع" — دائماً خطط لمسار أمامي.
-• إذا فشل شيء سابقاً، خطط لنهج مختلف هذه المرة.
-• أجب دائماً بنفس لغة المستخدم (عربي أو إنجليزي)."""
+• إذا فشل شيء سابقاً، خطط لنهج مختلف.
+• أجب بنفس لغة المستخدم."""
 
 def planner_node(state: AgentState) -> dict:
     """
@@ -572,14 +401,8 @@ def planner_node(state: AgentState) -> dict:
         clean_content  = content.replace("CONVERSATIONAL_ONLY", "").strip()
         clean_response = AIMessage(content=clean_content)
 
-        # ── Check for duplicate message ──────────────────────────────────────
-        if is_duplicate_message(clean_response, messages, min_length=50):
-            clean_response = AIMessage(
-                content=(
-                    clean_content + "\n\n"
-                    "⚠️ [Duplicate response detected — message was slightly rephrased to avoid exact duplication]"
-                )
-            )
+        # ── Check for duplicate message (silently skip the duplicate warning) ─
+        # The user doesn't need to see deduplication internals.
         return {
             "messages":                messages + [clean_response],
             "plan":                    ["CONVERSATIONAL_ONLY"],
@@ -603,27 +426,17 @@ def planner_node(state: AgentState) -> dict:
         if ln.strip() and (ln.strip()[0].isdigit() or ln.strip().startswith("•"))
     ]
 
-    # ── Check for duplicate plan response ────────────────────────────────────
-    if is_duplicate_message(response, messages, min_length=50):
-        content = (
-            content + "\n\n"
-            "⚠️ [Plan was slightly rephrased to avoid exact duplication with previous response]"
-        )
-        response = AIMessage(content=content)
+    # ── Check for duplicate plan response (silent — no user-visible warning) ─
+    # Deduplication is internal; the user should not see warnings about it.
 
-    # Insert a soft task-boundary marker. The Reviewer should focus on the
-    # CURRENT plan, but the agent must STILL be able to read earlier messages
-    # if the new request refers back to them ("download the file we discussed",
-    # "النسخة الثانية من ذاك التقرير", etc.).
+    # Insert a soft task-boundary marker as a SystemMessage so it guides
+    # the Reviewer/Worker internally but is NOT streamed to the user.
     task_id = str(uuid.uuid4())
-    cancel_marker = AIMessage(
+    cancel_marker = SystemMessage(
         content=(
-            "─── NEW TASK BOUNDARY ───\n"
-            "Reviewer: evaluate progress against the PLAN BELOW, not any older plan.\n"
-            "Worker: earlier messages remain available as conversational context — "
-            "consult them when the user's request refers back to prior tasks "
-            "(e.g. 'the file we downloaded', 'continue from where you left off').\n"
-            "─────────────────────────"
+            "[INTERNAL — DO NOT SHOW TO USER]\n"
+            "New task started. Reviewer: evaluate progress against the PLAN BELOW only.\n"
+            "Worker: earlier messages remain available as conversational context."
         ),
         metadata={
             "type": "task_cancel",
@@ -1059,77 +872,33 @@ def worker_node(state: AgentState) -> dict:
 # Node 3 — ReviewerNode
 # ─────────────────────────────────────────────────────────────────────────────
 
-_REVIEWER_SYSTEM = """You are a senior quality reviewer for an autonomous AI agent on Windows 64-bit.
-Your job: determine the correct verdict for the current task state.
+_REVIEWER_SYSTEM = """أنت مراجع جودة لوكيل ذكي يعمل على Windows 64-bit.
+مهمتك: تحديد الحكم الصحيح لحالة المهمة الحالية.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-YOU MUST START WITH EXACTLY ONE OF THESE VERDICTS:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+الأحكام (ابدأ بواحد فقط):
+  "TASK_COMPLETE:" — الهدف تحقق، أو الوكيل ينتظر المستخدم، أو تُركت المهمة.
+  "CONTINUE:"      — استدعاء أداة محدد يمكن تنفيذه الآن. اذكر: أي أداة، المعاملات، النتيجة المتوقعة.
+  "FAILED:"        — مستحيل. نفس الخطأ تكرر 3+ مرات.
 
-"TASK_COMPLETE:" — Goal fully achieved, OR agent is waiting for user input, OR
-                   task was abandoned/changed by the user.
+قواعد منع الحلقات (تتجاوز كل شيء):
+• نفس الأداة استُدعيت/تُخطّيت 3+ مرات → FAILED
+• "SKIPPED" ظهرت 2+ مرة → FAILED
+• Worker لم يستدعِ أي أداة 2+ مرة → TASK_COMPLETE
+• Worker يحاول Google لتحميل أغنية → أوجّهه لـ download_audio_by_search
+• نفس "file not found" ظهر 2+ مرة → FAILED
+• رسائل انتظار متكررة → TASK_COMPLETE
+• المستخدم غيّر طلبه → TASK_COMPLETE
+• بعد "NEW TASK BOUNDARY": قيّم الخطة الجديدة فقط، لكن الذاكرة السابقة صالحة.
 
-"CONTINUE:"      — A specific next tool call is possible RIGHT NOW without user input.
-                   Must include: which tool, exact arguments, expected outcome.
+قواعد عادية:
+• CONTINUE فقط عندما يمكن تنفيذ استدعاء أداة جديد الآن.
+• قارن خطوات الخطة بالمكتملة.
+• لا تقل CONTINUE فقط "لسؤال المستخدم" — ذلك TASK_COMPLETE.
 
-"FAILED:"        — Completely impossible. Same specific error happened 3+ times.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ANTI-LOOP RULES (READ CAREFULLY — THESE OVERRIDE EVERYTHING):
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-★ If the same tool was called (or SKIPPED for duplication) 3+ times → FAILED
-  (The worker is stuck looping. Stop it now and report the failure.)
-
-★ If you see "SKIPPED: Tool ... was already called" 2+ times → FAILED with a
-  message telling the user to try a different approach (suggest the right
-  yt-dlp tool: download_audio_by_search for songs).
-
-★ If the worker failed to call ANY tool 2+ times in recent messages → TASK_COMPLETE
-  (The agent is stuck and needs user input. Do NOT say CONTINUE — it will loop forever.)
-
-★ If the worker is trying to scrape Google/sketchy mp3 sites for a song → REPLAN
-  Tell it: "Use download_audio_by_search(query='song title artist', dest='desktop:')
-  instead — that's the correct tool for downloading songs."
-
-★ If the same "file not found" or "no results" situation appeared 2+ times → FAILED
-  (Do NOT keep saying CONTINUE for a resource that clearly does not exist.)
-
-★ If you see "I am ready to help" or similar waiting messages repeated → TASK_COMPLETE
-  (The agent has completed what it can and is now waiting for the user.)
-
-★ If the user changed their request mid-task (e.g., from music to project) → TASK_COMPLETE
-  (The old task is abandoned. The new task will be handled in the next cycle.)
-
-★ CRITICAL: If you see a "NEW TASK BOUNDARY" line, your VERDICT scope is the
-  plan that comes AFTER it. Do NOT say CONTINUE based on unfinished work from
-  an earlier plan. BUT — the agent's MEMORY still includes earlier messages,
-  so summaries, tool results, and downloaded files from before remain valid
-  context (e.g. "the song we just downloaded" is a real artifact, even though
-  the download task itself is closed).
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-NORMAL DECISION RULES:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• CONTINUE is only valid when a NEW tool call can actually be made right now.
-• Count plan steps vs completed steps. They must match for TASK_COMPLETE.
-• web_search ran but download_file has NOT run yet → CONTINUE with exact URL.
-• File downloaded successfully → TASK_COMPLETE.
-• Never say CONTINUE just to "ask the user" — that belongs in TASK_COMPLETE.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-SUMMARY STYLE (this is read aloud in voice mode — keep it human):
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-After your verdict, write a SHORT human-friendly summary (1–3 sentences):
-  • Match the user's language (Arabic if they wrote in Arabic, English otherwise)
-  • Sound natural and warm, like a helpful friend — NOT a status report
-  • Skip technical jargon, file paths, tool names, and bullet points
-  • Use contractions and conversational phrasing
-  • Express emotion when fitting: relief on success, regret on failure
-  • No markdown formatting (no **, no #, no ```) — plain prose only
-
-Good (Arabic): "تمام! حملت الملف على سطح المكتب. تقدر تفتحه دلوقتي."
-Good (English): "Done! The file's on your desktop, ready when you are."
-Bad: "**TASK_COMPLETE:** File `song.mp3` downloaded to `C:\\Users\\...\\Desktop\\song.mp3` via `download_file()`."
+أسلوب الملخص (يُقرأ صوتياً — اجعله إنسانياً):
+بعد الحكم، اكتب ملخصاً قصيراً (1-3 جمل):
+• بلغة المستخدم (عربي/إنجليزي) • نبرة ودية ودافئة • بدون markdown أو أسماء أدوات
+مثال جيد: "تمام! حملت الملف على سطح المكتب. تقدر تفتحه دلوقتي."
 """
 
 def reviewer_node(state: AgentState) -> dict:
@@ -1143,9 +912,9 @@ def reviewer_node(state: AgentState) -> dict:
 
     # ── Immediate TASK_COMPLETE for conversational messages ───────────────────
     if plan and plan[0] == "CONVERSATIONAL_ONLY":
-        done_msg = AIMessage(content="TASK_COMPLETE: Conversational response delivered.")
+        # No extra message needed — the planner already replied to the user.
         return {
-            "messages":                messages + [done_msg],
+            "messages":                messages,
             "completed_steps":         list(state.get("completed_steps", [])) + ["Conversational response"],
             "error_logs":              error_logs,
             "plan":                    plan,
@@ -1183,17 +952,33 @@ def reviewer_node(state: AgentState) -> dict:
     system   = SystemMessage(content=_REVIEWER_SYSTEM)
     response = _main_llm.invoke([system, progress_note] + messages)
 
+    # ── Strip verdict prefixes — keep verdict for should_continue() logic
+    #    but put the user-friendly summary in a separate clean message ─────────
+    raw_content = response.content if isinstance(response.content, str) else ""
+
     # ── Check for duplicate review message ───────────────────────────────────
     if is_duplicate_message(response, messages, min_length=50):
+        raw_content += "\n\n⚠️ [Review was rephrased to avoid exact duplication]"
+        response = AIMessage(content=raw_content)
+
+    # Strip verdict tokens from user-visible content while preserving
+    # the original for should_continue() routing.
+    _VERDICT_PREFIXES = ("TASK_COMPLETE:", "CONTINUE:", "FAILED:", "REPLAN:")
+    clean_content = raw_content
+    for prefix in _VERDICT_PREFIXES:
+        if clean_content.strip().startswith(prefix):
+            clean_content = clean_content.strip()[len(prefix):].strip()
+            break
+    # Build the response: keep original content (with verdict) for routing,
+    # but store the cleaned version for display
+    if clean_content != raw_content:
         response = AIMessage(
-            content=(
-                response.content + "\n\n"
-                "⚠️ [Review was rephrased to avoid exact duplication]"
-            )
+            content=clean_content,
+            metadata={**(response.metadata or {}), "_original_verdict": raw_content},
         )
 
     completed = list(completed_steps)
-    completed.append(f"[Review] {response.content[:120]}")
+    completed.append(f"[Review] {raw_content[:120]}")
 
     return {
         "messages":                messages + [response],
@@ -1280,7 +1065,13 @@ def should_continue(state: AgentState) -> Literal["worker", "__end__"]:
     for msg in reversed(messages):
         if isinstance(msg, AIMessage) and not getattr(msg, "tool_calls", []):
             content = msg.content if isinstance(msg.content, str) else ""
-            if "TASK_COMPLETE:" in content or "FAILED:" in content:
+            # Also check the original verdict stored in metadata (verdict
+            # prefixes are stripped from content for clean display)
+            original = ""
+            if hasattr(msg, "metadata") and isinstance(msg.metadata, dict):
+                original = msg.metadata.get("_original_verdict", "")
+            check_text = f"{content} {original}"
+            if "TASK_COMPLETE:" in check_text or "FAILED:" in check_text:
                 return "__end__"
             # Also stop if the reviewer is asking the user for info
             if "waiting for user" in content.lower() or "provide the" in content.lower():

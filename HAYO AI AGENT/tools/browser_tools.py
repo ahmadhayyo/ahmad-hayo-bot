@@ -438,6 +438,7 @@ def browser_download_to_desktop(
     and save it to the Desktop. Use this when a direct httpx download would fail
     because the site requires a logged-in session.
     """
+    from config import DESKTOP_DIR as _DESKTOP
 
     async def _do():
         await _ensure_browser()
@@ -447,7 +448,8 @@ def browser_download_to_desktop(
                 await download_page.goto(url)
             download = await dl_info.value
             suggested = download.suggested_filename
-            target = DOWNLOADS_DIR / (filename or suggested)
+            target = _DESKTOP / (filename or suggested)
+            target.parent.mkdir(parents=True, exist_ok=True)
             await download.save_as(str(target))
             return f"[OK] Downloaded -> {target}"
         finally:

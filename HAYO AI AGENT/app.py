@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent / ".env", override=True)  # must run BEFORE agent imports read env vars
 
 import chainlit as cl            # noqa: E402
-from langchain_core.messages import AIMessageChunk, HumanMessage  # noqa: E402
+from langchain_core.messages import AIMessageChunk, HumanMessage, SystemMessage as _SysMsg  # noqa: E402
 from langgraph.types import Command  # noqa: E402
 from agent.workflow import compile_graph  # noqa: E402
 from core.voice_system import (  # noqa: E402
@@ -141,6 +141,54 @@ def _is_continue_request(text: str) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 # Streaming helpers
 # ─────────────────────────────────────────────────────────────────────────────
+# ── Internal tokens that must NEVER appear in user-facing output ──────────────
+_INTERNAL_MARKERS = (
+    "NEW TASK BOUNDARY",
+    "CONVERSATIONAL_ONLY",
+    "TASK_COMPLETE:",
+    "TASK_COMPLETE.",
+    "FAILED:",
+    "CONTINUE:",
+    "Reviewer:",
+    "Worker:",
+    "─── NEW TASK",
+    "─────────────────────────",
+    "━━━━━━━━━━━━━━━━━━━━━━━━━",
+    "[Context summary",
+    "[Review]",
+    "[Duplicate response detected",
+    "[Review was rephrased",
+    "[Plan was slightly rephrased",
+    "Conversational response delivered",
+    "evaluate progress against the PLAN",
+    "earlier messages remain available",
+    "Worker failed to call any tool",
+    "SKIPPED: Tool",
+    "[INTERNAL",
+    "DO NOT SHOW TO USER",
+    "[PROGRESS SNAPSHOT]",
+    "Plan steps:",
+    "⏭️ SKIPPED:",
+)
+
+
+def _filter_internal_tokens(text: str) -> str:
+    """Strip internal control tokens from text before showing to the user."""
+    if not text:
+        return text
+    lines = text.split("\n")
+    cleaned = []
+    for line in lines:
+        if any(marker in line for marker in _INTERNAL_MARKERS):
+            continue
+        cleaned.append(line)
+    result = "\n".join(cleaned).strip()
+    # Collapse multiple blank lines
+    while "\n\n\n" in result:
+        result = result.replace("\n\n\n", "\n\n")
+    return result
+
+
 def _extract_text_chunk(chunk: AIMessageChunk) -> str:
     content = chunk.content
     if isinstance(content, str):
@@ -192,15 +240,21 @@ async def _run_graph(input_or_command, config: dict) -> None:
                 await active_step.__aenter__()
                 current_node = node
 
-            # Stream text tokens
+            # Skip SystemMessage chunks — they are internal context only
+            if isinstance(msg_chunk, _SysMsg):
+                continue
+
+            # Stream text tokens — filter internal control markers
             if hasattr(msg_chunk, "content"):
                 text = _extract_text_chunk(msg_chunk)
                 if text:
-                    await response_msg.stream_token(text)
-                    # Only buffer reviewer / planner text for TTS — worker
-                    # output is mostly tool plumbing we don't want to read aloud.
-                    if node in ("planner", "reviewer"):
-                        final_text_buf.append(text)
+                    filtered = _filter_internal_tokens(text)
+                    if filtered:
+                        await response_msg.stream_token(filtered)
+                        # Only buffer reviewer / planner text for TTS — worker
+                        # output is mostly tool plumbing we don't want to read aloud.
+                        if node in ("planner", "reviewer"):
+                            final_text_buf.append(filtered)
 
     except Exception as exc:
         await cl.Message(
@@ -817,8 +871,12 @@ async def on_message(message: cl.Message) -> None:
         last_verdict = ""
         for msg in reversed(messages_list):
             content = getattr(msg, "content", "")
-            if isinstance(content, str) and ("FAILED:" in content or "TASK_COMPLETE:" in content):
-                last_verdict = content[:20]
+            # Check metadata for original verdict (stripped from display content)
+            meta = getattr(msg, "metadata", None) or {}
+            original = meta.get("_original_verdict", "")
+            check = f"{content} {original}" if isinstance(content, str) else str(original)
+            if "FAILED:" in check or "TASK_COMPLETE:" in check:
+                last_verdict = check[:40]
                 break
 
         if errors and "FAILED:" in last_verdict:
