@@ -413,7 +413,7 @@ def planner_node(state: AgentState) -> dict:
     _ensure_provider_match()  # Ensure correct LLM provider is being used
     messages = _summarize_old_messages(state.get("messages", []))
     system   = SystemMessage(content=_PLANNER_SYSTEM)
-    response = _main_llm.invoke([system] + messages)
+    response = _main_llm.invoke(_sanitize_messages([system] + messages))
     content  = response.content if isinstance(response.content, str) else ""
 
     # ── Detect conversational response ────────────────────────────────────────
@@ -685,7 +685,7 @@ def worker_node(state: AgentState) -> dict:
         )
     )
 
-    llm_response = _llm_with_tools.invoke([system] + messages)
+    llm_response = _llm_with_tools.invoke(_sanitize_messages([system] + messages))
     new_messages  = list(messages) + [llm_response]
 
     # ── Guard: no tool call → inject diagnostic message ───────────────────────
@@ -976,7 +976,7 @@ def reviewer_node(state: AgentState) -> dict:
     )
 
     system   = SystemMessage(content=_REVIEWER_SYSTEM)
-    response = _main_llm.invoke([system, progress_note] + messages)
+    response = _main_llm.invoke(_sanitize_messages([system, progress_note] + messages))
 
     # ── Strip verdict prefixes — keep verdict for should_continue() logic
     #    but put the user-friendly summary in a separate clean message ─────────
