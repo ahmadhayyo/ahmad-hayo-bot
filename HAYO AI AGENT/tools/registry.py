@@ -156,6 +156,11 @@ from tools.gdrive_tools import (
     gdrive_download,
     gdrive_upload,
 )
+from tools.testing_tools import (
+    validate_document,
+    run_executable_test,
+    open_and_screenshot,
+)
 
 ALL_TOOLS: list[BaseTool] = [
     # ═══════════════════════════════════════════════════════════
@@ -280,6 +285,9 @@ ALL_TOOLS: list[BaseTool] = [
     # ═══════════════════════════════════════════════════════════
     file_info,
     file_compare,
+    validate_document,
+    run_executable_test,
+    open_and_screenshot,
 
     # ═══════════════════════════════════════════════════════════
     # ADVANCED DOWNLOAD (with progress, retry, integrity)
