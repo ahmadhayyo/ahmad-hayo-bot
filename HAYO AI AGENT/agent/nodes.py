@@ -233,20 +233,14 @@ def _tool_call_id(tc) -> str | None:
 
 def _sanitize_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
     """
-    Enforce strict OpenAI-compatible tool message sequencing.
+    Enforce strict LLM-compatible message sequencing.
 
-    OpenAI-style APIs (DeepSeek, OpenAI, etc.) raise 400 if:
-      A) A ToolMessage has no preceding AIMessage with a matching tool_call_id
-      B) An AIMessage has tool_calls whose responses never appear
-
-    This sanitizer fixes both:
-      1. Drops orphan ToolMessages (case A)
+    Fixes:
+      1. Drops orphan ToolMessages (no preceding AIMessage with matching tool_call_id)
       2. Re-anchors each ToolMessage right after its declaring AIMessage
-      3. Synthesizes placeholder ToolMessages for any unanswered tool_calls (case B)
-
-    The result is a message sequence where every AIMessage(tool_calls=[a,b,c])
-    is immediately followed by ToolMessage(a), ToolMessage(b), ToolMessage(c)
-    in any order. No orphans, no missing responses.
+      3. Synthesizes placeholder ToolMessages for any unanswered tool_calls
+      4. Converts stray SystemMessages in the history to AIMessages to prevent
+         "multiple non-consecutive system messages" errors (Anthropic, etc.)
     """
     if not messages:
         return messages
@@ -259,11 +253,19 @@ def _sanitize_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
 
     result: list[BaseMessage] = []
     used_response_ids: set[str] = set()
+    seen_system = False
 
     for msg in messages:
         if isinstance(msg, ToolMessage):
             # Strip from natural position — we'll re-insert after the matching AIMessage
             continue
+
+        # Convert non-first SystemMessages to AIMessages to avoid API errors
+        if isinstance(msg, SystemMessage):
+            if seen_system:
+                msg = AIMessage(content=f"[Internal note]\n{msg.content}")
+            else:
+                seen_system = True
 
         result.append(msg)
 
@@ -357,15 +359,22 @@ _PLANNER_SYSTEM = """أنت وكيل تنفيذي ذكي خارق القدرات
 • أنت تملك أدوات كاملة: نظام (PowerShell/CMD)، ملفات، متصفح (Playwright دائم)، سطح مكتب (pyautogui)،
   شبكة، صوت، مكتبية (Excel/Word/PDF)، ترجمة، GitHub، Google Drive، تحويل ملفات، تحميل وسائط.
   تفاصيل كل أداة ومعاملاتها متاحة لك تلقائياً عبر bind_tools.
-• للترجمة: استخدم translate_text لترجمة نص عادي.
-  استخدم excel_clone_translated لاستنساخ ملف Excel مع ترجمته لأي لغة والحفاظ على التنسيق الكامل.
-  اللغات المدعومة: ar, hi, en, fr, es, de, tr, fa, ur, zh-CN, ja, ko, ru وغيرها.
+
+⚠️ قاعدة الترجمة الإلزامية — يجب اتباعها دائماً:
+• إذا طلب المستخدم ترجمة أو استنساخ أو نسخ ملف بلغة مختلفة:
+  - ملف Excel (.xlsx/.xls) → استخدم excel_clone_translated مباشرة (أداة واحدة فقط)
+  - نص عادي → استخدم translate_text
+  ❌ لا تستخدم file_write أو write_file أو doc_convert أو أي أداة أخرى لهذا الغرض
+  ❌ لا تحاول الترجمة يدوياً — استخدم أدوات الترجمة المتاحة فقط
+  اللغات المدعومة: ar, hi, en, fr, es, de, tr, fa, ur, zh-CN, ja, ko, ru, pt, it, nl وغيرها
+  رموز اللغات الشائعة: ar=عربي, hi=هندي, en=إنجليزي, fr=فرنسي, es=إسباني, de=ألماني
 
 تصنيف الطلب:
   تحية/محادثة/سؤال بدون أداة → أجب بودّ وطبيعية بلغة المستخدم (نبرة دافئة، بدون markdown)
   ثم اكتب: CONVERSATIONAL_ONLY
 
-  مهمة حقيقية → اكتب خطة مرقمة مختصرة (3-8 خطوات) مع اسم الأداة في كل خطوة.
+  مهمة حقيقية → اكتب خطة مرقمة مختصرة (1-8 خطوات) مع اسم الأداة في كل خطوة.
+  ⚠️ هام: استخدم فقط أسماء الأدوات المسجلة فعلاً. لا تخترع أسماء أدوات غير موجودة.
 
 أمثلة خطط:
   1. open_app('word') → فتح Word
@@ -378,15 +387,19 @@ _PLANNER_SYSTEM = """أنت وكيل تنفيذي ذكي خارق القدرات
   1. excel_create(path='Desktop/report.xlsx', data='[{"الاسم":"أحمد","الراتب":5000}]')
   2. excel_add_column(path='...', header='الضريبة', formula_or_values='=B{row}*0.1')
 
+  مثال ترجمة ملف Excel (استنساخ بلغة مختلفة):
   1. excel_clone_translated(source_path='Desktop/report.xlsx', dest_path='Desktop/report_hindi.xlsx', target_lang='hi', source_lang='ar')
+  (خطوة واحدة فقط — الأداة تقوم بكل شيء: قراءة، ترجمة، حفظ مع التنسيق)
 
+  مثال ترجمة نص:
   1. translate_text(text='مرحبا بالعالم', target_lang='hi')
 
 القواعد:
 • جمل مرقمة فقط. سمِّ الأداة في كل خطوة.
 • لا تقل أبداً "لا أستطيع" — دائماً خطط لمسار أمامي.
 • إذا فشل شيء سابقاً، خطط لنهج مختلف.
-• أجب بنفس لغة المستخدم."""
+• أجب بنفس لغة المستخدم.
+• استخدم فقط الأدوات المسجلة — لا تخترع أدوات وهمية."""
 
 def planner_node(state: AgentState) -> dict:
     """
@@ -564,7 +577,9 @@ def worker_node(state: AgentState) -> dict:
             "2. لا تقل أبداً أنك لا تستطيع. ابحث عن طريقة. دائماً.\n"
             "3. لا تطلب إذن المستخدم أو توضيح. فقط نفذ.\n"
             "4. لا تشرح ما ستفعله — فقط استدعِ الأداة.\n"
-            "5. لا تكرر نفس الأداة بنفس المعاملات. إذا فشلت — جرب نهجاً مختلفاً تماماً.\n\n"
+            "5. لا تكرر نفس الأداة بنفس المعاملات. إذا فشلت — جرب نهجاً مختلفاً تماماً.\n"
+            "6. للترجمة/استنساخ ملفات بلغة مختلفة: استخدم excel_clone_translated (لملفات Excel) أو translate_text (لنص عادي) فقط.\n"
+            "   ❌ لا تستخدم write_file أو أي أداة أخرى للترجمة.\n\n"
             "🎵 تحميل أغاني/فيديو — استخدم yt-dlp مباشرة (الطريق الأقصر والأنجح):\n"
             "   مثال: 'حمّل أغنية بعيش لتامر حسني' →\n"
             "     download_audio_by_search(query='بعيش تامر حسني', dest='desktop:')\n"
