@@ -1,8 +1,9 @@
 """
-Office document tools — Excel, Word, PDF.
+Office document tools — Excel, Word, PDF, Translation.
 
 Create, read, edit spreadsheets, documents, and PDF files.
 Uses openpyxl (Excel), python-docx (Word), pypdf + reportlab (PDF).
+Includes translation tools using deep-translator (Google Translate).
 """
 
 from __future__ import annotations
@@ -551,3 +552,212 @@ def convert_word_to_pdf(word_path: str, pdf_path: str) -> str:
     pdf_doc = SimpleDocTemplate(str(out), pagesize=A4)
     pdf_doc.build(story)
     return f"Converted {word_path} → {pdf_path}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  TRANSLATION TOOLS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Supported language codes for quick reference in tool docstrings
+_LANG_EXAMPLES = (
+    "ar=عربي, hi=هندي, en=إنجليزي, fr=فرنسي, es=إسباني, de=ألماني, "
+    "tr=تركي, fa=فارسي, ur=أردو, zh-CN=صيني, ja=ياباني, ko=كوري, "
+    "ru=روسي, pt=برتغالي, it=إيطالي, nl=هولندي, auto=كشف تلقائي"
+)
+
+
+def _translate_single(text: str, source: str, target: str) -> str:
+    """Translate a single string using deep-translator GoogleTranslator."""
+    from deep_translator import GoogleTranslator
+    if not text or not text.strip():
+        return text
+    try:
+        return GoogleTranslator(source=source, target=target).translate(text)
+    except Exception:
+        return text
+
+
+def _translate_batch(texts: list[str], source: str, target: str) -> list[str]:
+    """Translate a list of strings, preserving empty/whitespace entries."""
+    from deep_translator import GoogleTranslator
+    translator = GoogleTranslator(source=source, target=target)
+    results: list[str] = []
+    # deep-translator supports batch up to ~5000 chars; chunk manually
+    batch: list[tuple[int, str]] = []
+    for i, t in enumerate(texts):
+        if t and t.strip():
+            batch.append((i, t))
+
+    translated_map: dict[int, str] = {}
+    # Translate in chunks of 50 to avoid API limits
+    chunk_size = 50
+    for start in range(0, len(batch), chunk_size):
+        chunk = batch[start:start + chunk_size]
+        chunk_texts = [t for _, t in chunk]
+        try:
+            translated = translator.translate_batch(chunk_texts)
+            for (idx, _orig), tr_text in zip(chunk, translated):
+                translated_map[idx] = tr_text if tr_text else _orig
+        except Exception:
+            # Fallback: translate one by one
+            for idx, orig in chunk:
+                try:
+                    translated_map[idx] = translator.translate(orig)
+                except Exception:
+                    translated_map[idx] = orig
+
+    for i, t in enumerate(texts):
+        results.append(translated_map.get(i, t))
+    return results
+
+
+@tool
+def translate_text(text: str, target_lang: str, source_lang: str = "auto") -> str:
+    """ترجمة نص من لغة إلى أخرى باستخدام Google Translate.
+
+    Args:
+        text: النص المراد ترجمته
+        target_lang: رمز اللغة الهدف (مثل hi=هندي, en=إنجليزي, ar=عربي, fr=فرنسي)
+        source_lang: رمز اللغة المصدر (افتراضي: auto = كشف تلقائي)
+
+    أمثلة:
+        translate_text(text='مرحبا بالعالم', target_lang='hi')
+        translate_text(text='Hello World', target_lang='ar')
+        translate_text(text='مرحبا', target_lang='en', source_lang='ar')
+
+    اللغات المدعومة: ar, hi, en, fr, es, de, tr, fa, ur, zh-CN, ja, ko, ru, pt, it, nl وغيرها
+    """
+    try:
+        from deep_translator import GoogleTranslator
+    except ImportError:
+        return "Error: deep-translator not installed. Run: pip install deep-translator"
+
+    if not text or not text.strip():
+        return "Error: empty text provided"
+
+    try:
+        result = GoogleTranslator(source=source_lang, target=target_lang).translate(text)
+        return result if result else "Error: translation returned empty result"
+    except Exception as exc:
+        return f"Error: {type(exc).__name__}: {exc}"
+
+
+@tool
+def excel_clone_translated(
+    source_path: str,
+    dest_path: str,
+    target_lang: str,
+    source_lang: str = "auto",
+    sheets: str = "",
+) -> str:
+    """استنساخ ملف Excel مع ترجمة المحتوى النصي والحفاظ على التنسيق الكامل.
+
+    يقرأ ملف Excel المصدر، يترجم جميع الخلايا النصية، ويحفظ نسخة جديدة
+    مع الحفاظ الكامل على: الألوان، الخطوط، الحدود، عرض الأعمدة، ارتفاع الصفوف،
+    الخلايا المدمجة، التنسيق الشرطي، والصيغ الرياضية.
+
+    Args:
+        source_path: مسار ملف Excel المصدر
+        dest_path: مسار ملف Excel الناتج المترجم
+        target_lang: رمز اللغة الهدف (مثل hi=هندي, en=إنجليزي, fr=فرنسي)
+        source_lang: رمز اللغة المصدر (افتراضي: auto = كشف تلقائي)
+        sheets: أسماء الأوراق للترجمة مفصولة بفاصلة (فارغ = كل الأوراق)
+
+    أمثلة:
+        excel_clone_translated(
+            source_path='C:/Users/user/Desktop/report.xlsx',
+            dest_path='C:/Users/user/Desktop/report_hindi.xlsx',
+            target_lang='hi', source_lang='ar'
+        )
+        excel_clone_translated(
+            source_path='~/Desktop/data.xlsx',
+            dest_path='~/Desktop/data_english.xlsx',
+            target_lang='en'
+        )
+
+    اللغات المدعومة: ar, hi, en, fr, es, de, tr, fa, ur, zh-CN, ja, ko, ru, pt, it, nl وغيرها
+    """
+    try:
+        from openpyxl import load_workbook
+    except ImportError:
+        return "Error: openpyxl not installed. Run: pip install openpyxl"
+
+    try:
+        from deep_translator import GoogleTranslator
+    except ImportError:
+        return "Error: deep-translator not installed. Run: pip install deep-translator"
+
+    src = Path(os.path.expandvars(os.path.expanduser(source_path))).resolve()
+    if not src.exists():
+        return f"Error: file not found: {source_path}"
+
+    dst = Path(os.path.expandvars(os.path.expanduser(dest_path))).resolve()
+    dst.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        wb = load_workbook(str(src))
+    except Exception as exc:
+        return f"Error loading workbook: {type(exc).__name__}: {exc}"
+
+    # Determine which sheets to translate
+    if sheets:
+        sheet_names = [s.strip() for s in sheets.split(",") if s.strip()]
+    else:
+        sheet_names = wb.sheetnames
+
+    translator = GoogleTranslator(source=source_lang, target=target_lang)
+    total_translated = 0
+    total_cells = 0
+
+    for sheet_name in sheet_names:
+        if sheet_name not in wb.sheetnames:
+            continue
+        ws = wb[sheet_name]
+
+        # Collect all text cells for batch translation
+        text_cells: list[tuple[int, int, str]] = []  # (row, col, value)
+        for row in ws.iter_rows():
+            for cell in row:
+                total_cells += 1
+                if cell.value is not None and isinstance(cell.value, str):
+                    val = cell.value.strip()
+                    # Skip formulas, empty strings, pure numbers
+                    if val and not val.startswith("="):
+                        text_cells.append((cell.row, cell.column, val))
+
+        if not text_cells:
+            continue
+
+        # Batch translate for efficiency
+        originals = [t[2] for t in text_cells]
+        translated = _translate_batch(originals, source_lang, target_lang)
+
+        # Write translated values back (formatting is preserved automatically)
+        for (row, col, _orig), tr_text in zip(text_cells, translated):
+            ws.cell(row=row, column=col).value = tr_text
+            total_translated += 1
+
+    # Also translate the sheet tab names
+    for ws in wb.worksheets:
+        if ws.title in sheet_names:
+            original_title = ws.title
+            try:
+                new_title = translator.translate(original_title)
+                if new_title and new_title != original_title:
+                    ws.title = new_title[:31]  # Excel sheet name max 31 chars
+            except Exception:
+                pass
+
+    try:
+        wb.save(str(dst))
+    except Exception as exc:
+        return f"Error saving workbook: {type(exc).__name__}: {exc}"
+
+    return (
+        f"Excel file cloned and translated successfully!\n"
+        f"Source: {src}\n"
+        f"Output: {dst}\n"
+        f"Language: {source_lang} → {target_lang}\n"
+        f"Sheets translated: {len(sheet_names)}\n"
+        f"Cells translated: {total_translated} / {total_cells} total"
+    )

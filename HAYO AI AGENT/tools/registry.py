@@ -91,6 +91,7 @@ from tools.office_tools import (
     excel_edit,
     excel_add_rows,
     excel_add_column,
+    excel_clone_translated,
     word_create,
     word_read,
     word_edit,
@@ -99,6 +100,7 @@ from tools.office_tools import (
     pdf_merge,
     convert_excel_to_pdf,
     convert_word_to_pdf,
+    translate_text,
 )
 from tools.advanced_download import (
     download_with_progress,
@@ -254,6 +256,7 @@ ALL_TOOLS: list[BaseTool] = [
     excel_edit,
     excel_add_rows,
     excel_add_column,
+    excel_clone_translated,
     word_create,
     word_read,
     word_edit,
@@ -262,6 +265,11 @@ ALL_TOOLS: list[BaseTool] = [
     pdf_merge,
     convert_excel_to_pdf,
     convert_word_to_pdf,
+
+    # ═══════════════════════════════════════════════════════════
+    # TRANSLATION
+    # ═══════════════════════════════════════════════════════════
+    translate_text,
 
     # ═══════════════════════════════════════════════════════════
     # ADVANCED DOWNLOAD (with progress, retry, integrity)
