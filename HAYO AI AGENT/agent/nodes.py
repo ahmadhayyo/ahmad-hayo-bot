@@ -421,6 +421,7 @@ _PLANNER_SYSTEM = """أنت وكيل تنفيذي ذكي خارق القدرات
 ⚠️ قاعدة الترجمة الإلزامية — يجب اتباعها دائماً:
 • إذا طلب المستخدم ترجمة أو استنساخ أو نسخ ملف بلغة مختلفة:
   - ملف Excel (.xlsx/.xls) → استخدم excel_clone_translated مباشرة (أداة واحدة فقط)
+  - ملف Word (.docx) → استخدم word_clone_translated مباشرة (أداة واحدة فقط)
   - نص عادي → استخدم translate_text
   ❌ لا تستخدم file_write أو write_file أو doc_convert أو أي أداة أخرى لهذا الغرض
   ❌ لا تحاول الترجمة يدوياً — استخدم أدوات الترجمة المتاحة فقط
@@ -449,8 +450,25 @@ _PLANNER_SYSTEM = """أنت وكيل تنفيذي ذكي خارق القدرات
   1. excel_clone_translated(source_path='Desktop/report.xlsx', dest_path='Desktop/report_hindi.xlsx', target_lang='hi', source_lang='ar')
   (خطوة واحدة فقط — الأداة تقوم بكل شيء: قراءة، ترجمة، حفظ مع التنسيق)
 
+  مثال ترجمة ملف Word (استنساخ بلغة مختلفة):
+  1. word_clone_translated(source_path='Desktop/document.docx', dest_path='Desktop/document_ja.docx', target_lang='ja', source_lang='ar')
+  (خطوة واحدة فقط — الأداة تقوم بكل شيء: قراءة، ترجمة، حفظ مع التنسيق والصور والجداول)
+
   مثال ترجمة نص:
   1. translate_text(text='مرحبا بالعالم', target_lang='hi')
+
+  مثال اختبار ملف:
+  1. validate_document(path='Desktop/report.xlsx') → فحص شامل للملف والتحقق من سلامته
+  2. open_and_screenshot(path='Desktop/report.xlsx') → فتح الملف وأخذ لقطة شاشة
+
+  مثال تشغيل واختبار سكريبت:
+  1. run_executable_test(command='python script.py', workdir='Desktop/project') → تشغيل والتقاط النتيجة
+
+⚠️ قاعدة الاختبار — عندما يطلب المستخدم اختبار أو فحص ملف:
+• فحص شامل لملف → استخدم validate_document (يعمل مع Excel, Word, PDF, صور, نصوص)
+• فتح ملف والتحقق البصري → استخدم open_and_screenshot
+• تشغيل سكريبت أو تطبيق → استخدم run_executable_test
+• مقارنة ملفين → استخدم file_compare
 
 القواعد:
 • جمل مرقمة فقط. سمِّ الأداة في كل خطوة.

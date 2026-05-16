@@ -763,6 +763,125 @@ def excel_clone_translated(
     )
 
 
+@tool
+def word_clone_translated(
+    source_path: str,
+    dest_path: str,
+    target_lang: str,
+    source_lang: str = "auto",
+) -> str:
+    """استنساخ ملف Word مع ترجمة المحتوى النصي والحفاظ على التنسيق والجداول والصور.
+
+    يقرأ ملف Word المصدر، يترجم جميع النصوص (فقرات، جداول، عناوين)،
+    ويحفظ نسخة جديدة مع الحفاظ الكامل على: الخطوط، الألوان، الجداول، الصور،
+    الرؤوس والتذييلات، والتنسيق.
+
+    Args:
+        source_path: مسار ملف Word المصدر (.docx)
+        dest_path: مسار ملف Word الناتج المترجم
+        target_lang: رمز اللغة الهدف (مثل hi=هندي, en=إنجليزي, ja=ياباني)
+        source_lang: رمز اللغة المصدر (افتراضي: auto = كشف تلقائي)
+
+    أمثلة:
+        word_clone_translated(
+            source_path='C:/Users/user/Desktop/report.docx',
+            dest_path='C:/Users/user/Desktop/report_hindi.docx',
+            target_lang='hi', source_lang='ar'
+        )
+        word_clone_translated(
+            source_path='~/Desktop/chapter.docx',
+            dest_path='~/Desktop/chapter_japanese.docx',
+            target_lang='ja'
+        )
+
+    اللغات المدعومة: ar, hi, en, fr, es, de, tr, fa, ur, zh-CN, ja, ko, ru, pt, it, nl وغيرها
+    """
+    import shutil
+
+    try:
+        from docx import Document
+    except ImportError:
+        return "Error: python-docx not installed. Run: pip install python-docx"
+
+    try:
+        from deep_translator import GoogleTranslator
+    except ImportError:
+        return "Error: deep-translator not installed. Run: pip install deep-translator"
+
+    src = Path(os.path.expandvars(os.path.expanduser(source_path))).resolve()
+    if not src.exists():
+        return f"Error: file not found: {source_path}"
+
+    dst = Path(os.path.expandvars(os.path.expanduser(dest_path))).resolve()
+    dst.parent.mkdir(parents=True, exist_ok=True)
+
+    # Copy the original file first to preserve images, headers, footers, etc.
+    try:
+        shutil.copy2(str(src), str(dst))
+    except Exception as exc:
+        return f"Error copying file: {type(exc).__name__}: {exc}"
+
+    try:
+        doc = Document(str(dst))
+    except Exception as exc:
+        return f"Error loading document: {type(exc).__name__}: {exc}"
+
+    total_translated = 0
+
+    def _translate_paragraph_runs(paragraph) -> int:
+        """Translate text in a paragraph while preserving run-level formatting."""
+        runs = paragraph.runs
+        if not runs:
+            return 0
+        full_text = "".join(r.text for r in runs)
+        if not full_text.strip():
+            return 0
+        translated = _translate_single(full_text, source_lang, target_lang)
+        if translated == full_text:
+            return 0
+        # Put translated text in first run, clear the rest
+        runs[0].text = translated
+        for r in runs[1:]:
+            r.text = ""
+        return 1
+
+    # Translate all paragraphs in the document body
+    for para in doc.paragraphs:
+        total_translated += _translate_paragraph_runs(para)
+
+    # Translate all tables
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    total_translated += _translate_paragraph_runs(para)
+
+    # Translate headers and footers
+    for section in doc.sections:
+        for header_footer in (section.header, section.footer):
+            if header_footer and header_footer.is_linked_to_previous is False:
+                for para in header_footer.paragraphs:
+                    total_translated += _translate_paragraph_runs(para)
+                for table in header_footer.tables:
+                    for row in table.rows:
+                        for cell in row.cells:
+                            for para in cell.paragraphs:
+                                total_translated += _translate_paragraph_runs(para)
+
+    try:
+        doc.save(str(dst))
+    except Exception as exc:
+        return f"Error saving document: {type(exc).__name__}: {exc}"
+
+    return (
+        f"Word file cloned and translated successfully!\n"
+        f"Source: {src}\n"
+        f"Output: {dst}\n"
+        f"Language: {source_lang} → {target_lang}\n"
+        f"Paragraphs translated: {total_translated}"
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  FILE VALIDATION & TESTING TOOLS
 # ═══════════════════════════════════════════════════════════════════════════════

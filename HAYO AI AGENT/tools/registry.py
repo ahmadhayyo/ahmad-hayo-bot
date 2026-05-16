@@ -92,6 +92,7 @@ from tools.office_tools import (
     excel_add_rows,
     excel_add_column,
     excel_clone_translated,
+    word_clone_translated,
     word_create,
     word_read,
     word_edit,
@@ -154,6 +155,11 @@ from tools.gdrive_tools import (
     gdrive_list,
     gdrive_download,
     gdrive_upload,
+)
+from tools.testing_tools import (
+    validate_document,
+    run_executable_test,
+    open_and_screenshot,
 )
 
 ALL_TOOLS: list[BaseTool] = [
@@ -259,6 +265,7 @@ ALL_TOOLS: list[BaseTool] = [
     excel_add_rows,
     excel_add_column,
     excel_clone_translated,
+    word_clone_translated,
     word_create,
     word_read,
     word_edit,
@@ -278,6 +285,9 @@ ALL_TOOLS: list[BaseTool] = [
     # ═══════════════════════════════════════════════════════════
     file_info,
     file_compare,
+    validate_document,
+    run_executable_test,
+    open_and_screenshot,
 
     # ═══════════════════════════════════════════════════════════
     # ADVANCED DOWNLOAD (with progress, retry, integrity)
