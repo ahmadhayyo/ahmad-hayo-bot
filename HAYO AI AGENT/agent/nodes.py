@@ -355,8 +355,11 @@ _PLANNER_SYSTEM = """أنت وكيل تنفيذي ذكي خارق القدرات
 • للمتصفح: استخدم browser_click لإرسال النماذج. browser_react_fill لمواقع SPA (React/Vue).
   browser_eval_js للقراءة فقط — لا للنقر أو الكتابة.
 • أنت تملك أدوات كاملة: نظام (PowerShell/CMD)، ملفات، متصفح (Playwright دائم)، سطح مكتب (pyautogui)،
-  شبكة، صوت، مكتبية (Excel/Word/PDF)، GitHub، Google Drive، تحويل ملفات، تحميل وسائط.
+  شبكة، صوت، مكتبية (Excel/Word/PDF)، ترجمة، GitHub، Google Drive، تحويل ملفات، تحميل وسائط.
   تفاصيل كل أداة ومعاملاتها متاحة لك تلقائياً عبر bind_tools.
+• للترجمة: استخدم translate_text لترجمة نص عادي.
+  استخدم excel_clone_translated لاستنساخ ملف Excel مع ترجمته لأي لغة والحفاظ على التنسيق الكامل.
+  اللغات المدعومة: ar, hi, en, fr, es, de, tr, fa, ur, zh-CN, ja, ko, ru وغيرها.
 
 تصنيف الطلب:
   تحية/محادثة/سؤال بدون أداة → أجب بودّ وطبيعية بلغة المستخدم (نبرة دافئة، بدون markdown)
@@ -374,6 +377,10 @@ _PLANNER_SYSTEM = """أنت وكيل تنفيذي ذكي خارق القدرات
 
   1. excel_create(path='Desktop/report.xlsx', data='[{"الاسم":"أحمد","الراتب":5000}]')
   2. excel_add_column(path='...', header='الضريبة', formula_or_values='=B{row}*0.1')
+
+  1. excel_clone_translated(source_path='Desktop/report.xlsx', dest_path='Desktop/report_hindi.xlsx', target_lang='hi', source_lang='ar')
+
+  1. translate_text(text='مرحبا بالعالم', target_lang='hi')
 
 القواعد:
 • جمل مرقمة فقط. سمِّ الأداة في كل خطوة.
@@ -639,6 +646,10 @@ def worker_node(state: AgentState) -> dict:
             "    • التحكم بالصوت                 → volume_control(action='set', level=50)\n"
             "    • قراءة نص بصوت عالٍ            → text_to_speech(text='...')\n"
             "    • إشعار Windows                 → show_notification(title='...', message='...')\n\n"
+            "  🌐 الترجمة:\n"
+            "    • ترجمة نص                      → translate_text(text='...', target_lang='hi')\n"
+            "    • استنساخ Excel مع ترجمة         → excel_clone_translated(source_path='...', dest_path='...', target_lang='hi', source_lang='ar')\n"
+            "    اللغات: ar=عربي, hi=هندي, en=إنجليزي, fr=فرنسي, es=إسباني, de=ألماني, tr=تركي, fa=فارسي, ur=أردو, zh-CN=صيني, ja=ياباني, ko=كوري\n\n"
             "استراتيجية العمل مع التطبيقات:\n"
             "  1. open_app('appname') → فتح التطبيق\n"
             "  2. wait(seconds=3)     → انتظار التحميل\n"

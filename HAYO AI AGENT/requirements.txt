@@ -54,6 +54,9 @@ python-docx>=1.1.0
 pypdf>=4.0.0
 reportlab>=4.1.0
 
+# Translation (Google Translate via deep-translator)
+deep-translator>=1.11.4
+
 # Pydantic (LangChain peer dep)
 pydantic>=2.7.0
 
