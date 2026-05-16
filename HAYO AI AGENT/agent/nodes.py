@@ -47,12 +47,13 @@ Provider can also be switched at runtime via the UI model selector.
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import uuid
 from typing import Literal
 
-from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.language_models import BaseChatModel
 from langgraph.types import interrupt
 
@@ -241,6 +242,9 @@ def _sanitize_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
       3. Synthesizes placeholder ToolMessages for any unanswered tool_calls
       4. Converts stray SystemMessages in the history to AIMessages to prevent
          "multiple non-consecutive system messages" errors (Anthropic, etc.)
+      5. Ensures the message list ends with a HumanMessage (or ToolMessage) to
+         prevent "assistant message prefill" errors (Anthropic requires the
+         conversation to end with a user message, not an assistant message)
     """
     if not messages:
         return messages
@@ -284,7 +288,60 @@ def _sanitize_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
                         tool_call_id=tid,
                     ))
 
+    # ── Fix 5: Ensure conversation doesn't end with a bare AIMessage ─────────
+    # Anthropic (and some other providers) reject conversations that end with
+    # an assistant message ("assistant message prefill" error).  This happens
+    # when the planner's AIMessage response is the last item in state messages
+    # and the worker/reviewer prepends its own SystemMessage.
+    # Solution: append a synthetic HumanMessage so the LLM sees a user turn.
+    if result and isinstance(result[-1], AIMessage) and not getattr(result[-1], "tool_calls", None):
+        result.append(HumanMessage(
+            content="نفّذ الخطة أعلاه. ابدأ بالخطوة التالية مباشرة باستخدام الأداة المناسبة."
+        ))
+
     return result
+
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_llm_invoke(llm, messages: list[BaseMessage], *, label: str = "LLM") -> AIMessage:
+    """
+    Invoke an LLM with error recovery.
+
+    If the first attempt fails (e.g. message ordering error, API error),
+    retry once with a simplified message list:
+      - Keep only the SystemMessage, last HumanMessage, and last few messages
+      - Ensure the list ends with a HumanMessage
+
+    Returns an AIMessage on success, or a synthetic error AIMessage on failure.
+    """
+    try:
+        return llm.invoke(messages)
+    except Exception as first_err:
+        logger.warning("[%s] First LLM call failed: %s — retrying with simplified messages", label, first_err)
+
+        # Build a minimal fallback message list
+        system_msgs = [m for m in messages if isinstance(m, SystemMessage)]
+        human_msgs = [m for m in messages if isinstance(m, HumanMessage)]
+        fallback: list[BaseMessage] = []
+        if system_msgs:
+            fallback.append(system_msgs[0])
+        if human_msgs:
+            fallback.append(human_msgs[-1])
+        else:
+            fallback.append(HumanMessage(content="Continue with the task."))
+
+        try:
+            return llm.invoke(fallback)
+        except Exception as second_err:
+            logger.error("[%s] Retry also failed: %s", label, second_err)
+            return AIMessage(
+                content=(
+                    f"❌ حدث خطأ في الاتصال بالنموذج: {type(second_err).__name__}: {second_err}\n"
+                    "يرجى المحاولة مرة أخرى أو تغيير النموذج باستخدام /model"
+                )
+            )
 
 
 def _summarize_old_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
@@ -318,7 +375,7 @@ def _summarize_old_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
     messages_to_summarize = _sanitize_messages(messages_to_summarize)
 
     summary_response = _fast_llm.invoke(
-        [
+        _sanitize_messages([
             SystemMessage(
                 content=(
                     "You are a context summariser for an AI agent. "
@@ -329,7 +386,7 @@ def _summarize_old_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
                 )
             ),
             *messages_to_summarize,
-        ]
+        ])
     )
 
     summary_msg = AIMessage(
@@ -357,7 +414,8 @@ _PLANNER_SYSTEM = """أنت وكيل تنفيذي ذكي خارق القدرات
 • للمتصفح: استخدم browser_click لإرسال النماذج. browser_react_fill لمواقع SPA (React/Vue).
   browser_eval_js للقراءة فقط — لا للنقر أو الكتابة.
 • أنت تملك أدوات كاملة: نظام (PowerShell/CMD)، ملفات، متصفح (Playwright دائم)، سطح مكتب (pyautogui)،
-  شبكة، صوت، مكتبية (Excel/Word/PDF)، ترجمة، GitHub، Google Drive، تحويل ملفات، تحميل وسائط.
+  شبكة، صوت، مكتبية (Excel/Word/PDF)، ترجمة، GitHub، Google Drive، تحويل ملفات، تحميل وسائط،
+  فحص ملفات (file_info لعرض تفاصيل أي ملف، file_compare لمقارنة ملفين).
   تفاصيل كل أداة ومعاملاتها متاحة لك تلقائياً عبر bind_tools.
 
 ⚠️ قاعدة الترجمة الإلزامية — يجب اتباعها دائماً:
@@ -413,7 +471,7 @@ def planner_node(state: AgentState) -> dict:
     _ensure_provider_match()  # Ensure correct LLM provider is being used
     messages = _summarize_old_messages(state.get("messages", []))
     system   = SystemMessage(content=_PLANNER_SYSTEM)
-    response = _main_llm.invoke(_sanitize_messages([system] + messages))
+    response = _safe_llm_invoke(_main_llm, _sanitize_messages([system] + messages), label="Planner")
     content  = response.content if isinstance(response.content, str) else ""
 
     # ── Detect conversational response ────────────────────────────────────────
@@ -685,7 +743,7 @@ def worker_node(state: AgentState) -> dict:
         )
     )
 
-    llm_response = _llm_with_tools.invoke(_sanitize_messages([system] + messages))
+    llm_response = _safe_llm_invoke(_llm_with_tools, _sanitize_messages([system] + messages), label="Worker")
     new_messages  = list(messages) + [llm_response]
 
     # ── Guard: no tool call → inject diagnostic message ───────────────────────
@@ -976,7 +1034,7 @@ def reviewer_node(state: AgentState) -> dict:
     )
 
     system   = SystemMessage(content=_REVIEWER_SYSTEM)
-    response = _main_llm.invoke(_sanitize_messages([system, progress_note] + messages))
+    response = _safe_llm_invoke(_main_llm, _sanitize_messages([system, progress_note] + messages), label="Reviewer")
 
     # ── Strip verdict prefixes — keep verdict for should_continue() logic
     #    but put the user-friendly summary in a separate clean message ─────────
