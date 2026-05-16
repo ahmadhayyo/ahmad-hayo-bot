@@ -101,6 +101,8 @@ from tools.office_tools import (
     convert_excel_to_pdf,
     convert_word_to_pdf,
     translate_text,
+    file_info,
+    file_compare,
 )
 from tools.advanced_download import (
     download_with_progress,
@@ -270,6 +272,12 @@ ALL_TOOLS: list[BaseTool] = [
     # TRANSLATION
     # ═══════════════════════════════════════════════════════════
     translate_text,
+
+    # ═══════════════════════════════════════════════════════════
+    # FILE VALIDATION & TESTING
+    # ═══════════════════════════════════════════════════════════
+    file_info,
+    file_compare,
 
     # ═══════════════════════════════════════════════════════════
     # ADVANCED DOWNLOAD (with progress, retry, integrity)

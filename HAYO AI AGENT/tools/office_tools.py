@@ -761,3 +761,222 @@ def excel_clone_translated(
         f"Sheets translated: {len(sheet_names)}\n"
         f"Cells translated: {total_translated} / {total_cells} total"
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  FILE VALIDATION & TESTING TOOLS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@tool
+def file_info(path: str) -> str:
+    """عرض معلومات تفصيلية عن ملف (الحجم، النوع، التاريخ، المحتوى).
+
+    يعمل مع جميع أنواع الملفات: Excel، Word، PDF، نص، صور، وغيرها.
+    يعرض: الحجم، تاريخ التعديل، عدد الأوراق/الصفحات، وملخص المحتوى.
+
+    Args:
+        path: مسار الملف المراد فحصه
+    """
+    import datetime
+
+    p = Path(os.path.expandvars(os.path.expanduser(path))).resolve()
+    if not p.exists():
+        return f"Error: file not found: {path}"
+
+    stat = p.stat()
+    size_kb = stat.st_size / 1024
+    modified = datetime.datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+    suffix = p.suffix.lower()
+
+    info_lines = [
+        f"📄 File: {p.name}",
+        f"📂 Path: {p}",
+        f"📏 Size: {size_kb:.1f} KB ({stat.st_size:,} bytes)",
+        f"📅 Modified: {modified}",
+        f"🏷️ Type: {suffix or 'unknown'}",
+    ]
+
+    # Excel details
+    if suffix in (".xlsx", ".xls"):
+        try:
+            from openpyxl import load_workbook
+            wb = load_workbook(str(p), read_only=True, data_only=True)
+            info_lines.append(f"📊 Sheets: {len(wb.sheetnames)} — {', '.join(wb.sheetnames)}")
+            for ws in wb.worksheets:
+                rows = ws.max_row or 0
+                cols = ws.max_column or 0
+                info_lines.append(f"   • {ws.title}: {rows} rows × {cols} columns")
+            wb.close()
+        except Exception as exc:
+            info_lines.append(f"⚠️ Could not read Excel details: {exc}")
+
+    # Word details
+    elif suffix == ".docx":
+        try:
+            from docx import Document
+            doc = Document(str(p))
+            para_count = len(doc.paragraphs)
+            table_count = len(doc.tables)
+            word_count = sum(len(para.text.split()) for para in doc.paragraphs)
+            info_lines.append(f"📝 Paragraphs: {para_count}")
+            info_lines.append(f"📊 Tables: {table_count}")
+            info_lines.append(f"🔤 Words: ~{word_count}")
+        except Exception as exc:
+            info_lines.append(f"⚠️ Could not read Word details: {exc}")
+
+    # PDF details
+    elif suffix == ".pdf":
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(str(p))
+            info_lines.append(f"📄 Pages: {len(reader.pages)}")
+            first_text = reader.pages[0].extract_text() if reader.pages else ""
+            if first_text:
+                info_lines.append(f"📝 First page preview: {first_text[:200]}...")
+        except Exception as exc:
+            info_lines.append(f"⚠️ Could not read PDF details: {exc}")
+
+    # Text/code files
+    elif suffix in (".txt", ".csv", ".json", ".xml", ".html", ".md", ".py", ".js"):
+        try:
+            with open(str(p), "r", encoding="utf-8", errors="replace") as f:
+                content = f.read(5000)
+            line_count = content.count("\n") + 1
+            info_lines.append(f"📝 Lines: ~{line_count}")
+            info_lines.append(f"📝 Preview (first 500 chars):\n{content[:500]}")
+        except Exception as exc:
+            info_lines.append(f"⚠️ Could not read text details: {exc}")
+
+    return "\n".join(info_lines)
+
+
+@tool
+def file_compare(path1: str, path2: str) -> str:
+    """مقارنة ملفين وعرض الفروقات بينهما.
+
+    يعمل مع ملفات Excel وWord والنصوص. يعرض الاختلافات في المحتوى والبنية.
+
+    Args:
+        path1: مسار الملف الأول
+        path2: مسار الملف الثاني
+    """
+    p1 = Path(os.path.expandvars(os.path.expanduser(path1))).resolve()
+    p2 = Path(os.path.expandvars(os.path.expanduser(path2))).resolve()
+
+    if not p1.exists():
+        return f"Error: file not found: {path1}"
+    if not p2.exists():
+        return f"Error: file not found: {path2}"
+
+    s1 = p1.suffix.lower()
+    s2 = p2.suffix.lower()
+
+    result_lines = [
+        f"📊 Comparing:",
+        f"  File 1: {p1.name} ({p1.stat().st_size:,} bytes)",
+        f"  File 2: {p2.name} ({p2.stat().st_size:,} bytes)",
+        "",
+    ]
+
+    # Excel comparison
+    if s1 in (".xlsx", ".xls") and s2 in (".xlsx", ".xls"):
+        try:
+            from openpyxl import load_workbook
+            wb1 = load_workbook(str(p1), data_only=True)
+            wb2 = load_workbook(str(p2), data_only=True)
+
+            result_lines.append(f"Sheets in File 1: {wb1.sheetnames}")
+            result_lines.append(f"Sheets in File 2: {wb2.sheetnames}")
+
+            common_count = min(len(wb1.sheetnames), len(wb2.sheetnames))
+            for i in range(common_count):
+                ws1 = wb1.worksheets[i]
+                ws2 = wb2.worksheets[i]
+                result_lines.append(f"\n--- Sheet {i+1}: '{ws1.title}' vs '{ws2.title}' ---")
+
+                rows1 = ws1.max_row or 0
+                rows2 = ws2.max_row or 0
+                cols1 = ws1.max_column or 0
+                cols2 = ws2.max_column or 0
+                result_lines.append(f"  Size: {rows1}×{cols1} vs {rows2}×{cols2}")
+
+                diffs = 0
+                max_rows = max(rows1, rows2)
+                max_cols = max(cols1, cols2)
+                for r in range(1, min(max_rows + 1, 101)):
+                    for c in range(1, max_cols + 1):
+                        v1 = ws1.cell(row=r, column=c).value
+                        v2 = ws2.cell(row=r, column=c).value
+                        if str(v1) != str(v2):
+                            diffs += 1
+                            if diffs <= 20:
+                                from openpyxl.utils import get_column_letter
+                                cell_ref = f"{get_column_letter(c)}{r}"
+                                result_lines.append(
+                                    f"  [{cell_ref}] '{v1}' → '{v2}'"
+                                )
+                if diffs > 20:
+                    result_lines.append(f"  ... and {diffs - 20} more differences")
+                elif diffs == 0:
+                    result_lines.append("  ✅ Content identical")
+                result_lines.append(f"  Total differences: {diffs}")
+
+            wb1.close()
+            wb2.close()
+        except Exception as exc:
+            result_lines.append(f"Error comparing Excel files: {exc}")
+
+    # Word comparison
+    elif s1 == ".docx" and s2 == ".docx":
+        try:
+            from docx import Document
+            doc1 = Document(str(p1))
+            doc2 = Document(str(p2))
+
+            paras1 = [p.text for p in doc1.paragraphs if p.text.strip()]
+            paras2 = [p.text for p in doc2.paragraphs if p.text.strip()]
+
+            result_lines.append(f"Paragraphs: {len(paras1)} vs {len(paras2)}")
+
+            diffs = 0
+            for i, (t1, t2) in enumerate(zip(paras1, paras2)):
+                if t1 != t2:
+                    diffs += 1
+                    if diffs <= 15:
+                        result_lines.append(f"  [Para {i+1}]")
+                        result_lines.append(f"    File 1: {t1[:100]}")
+                        result_lines.append(f"    File 2: {t2[:100]}")
+            if len(paras1) != len(paras2):
+                result_lines.append(f"  ⚠️ Different paragraph counts: {len(paras1)} vs {len(paras2)}")
+            if diffs > 15:
+                result_lines.append(f"  ... and {diffs - 15} more differences")
+            elif diffs == 0:
+                result_lines.append("  ✅ Content identical")
+        except Exception as exc:
+            result_lines.append(f"Error comparing Word files: {exc}")
+
+    # Text file comparison
+    else:
+        try:
+            with open(str(p1), "r", encoding="utf-8", errors="replace") as f:
+                lines1 = f.readlines()[:500]
+            with open(str(p2), "r", encoding="utf-8", errors="replace") as f:
+                lines2 = f.readlines()[:500]
+
+            result_lines.append(f"Lines: {len(lines1)} vs {len(lines2)}")
+            diffs = 0
+            for i, (l1, l2) in enumerate(zip(lines1, lines2)):
+                if l1 != l2:
+                    diffs += 1
+                    if diffs <= 15:
+                        result_lines.append(f"  [Line {i+1}]")
+                        result_lines.append(f"    File 1: {l1.rstrip()[:100]}")
+                        result_lines.append(f"    File 2: {l2.rstrip()[:100]}")
+            if diffs > 15:
+                result_lines.append(f"  ... and {diffs - 15} more differences")
+            elif diffs == 0:
+                result_lines.append("  ✅ Content identical")
+        except Exception as exc:
+            result_lines.append(f"Error comparing files: {exc}")
+
+    return "\n".join(result_lines)
