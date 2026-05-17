@@ -545,6 +545,13 @@ async def on_chat_start() -> None:
             f"{models_display}\n\n"
             "💡 لتغيير النموذج: `/model google` | `/model anthropic` | `/model deepseek` | `/model groq` | `/model ollama`\n\n"
             "---\n\n"
+            "### أوامر جديدة:\n"
+            "🔌 `/integrations` — مركز التكاملات (GitHub, Google Drive, Telegram...)\n"
+            "🧩 `/plugins` — الإضافات المخصصة\n"
+            "⚙️ `/settings` — الإعدادات\n"
+            "📋 `/tasks` — سجل المهام\n"
+            "📤 `/export` — تصدير المحادثة\n\n"
+            "---\n\n"
             "**أخبرني بما تريد — سأتذكر كل شيء قلته في هذه المحادثة.**"
         )
     ).send()
@@ -842,6 +849,167 @@ async def on_message(message: cl.Message) -> None:
             ).send()
         return
 
+    # ── Integrations command ──────────────────────────────────────────────────
+    if user_text.lower().startswith("/integrations") or user_text.lower().startswith("/تكاملات"):
+        from core.integrations import list_integrations
+        await cl.Message(content=list_integrations()).send()
+        return
+
+    if user_text.lower().startswith("/connect"):
+        parts = user_text.split(maxsplit=1)
+        if len(parts) < 2:
+            await cl.Message(content="استخدم: `/connect <اسم_الخدمة>`\nمثال: `/connect github`").send()
+            return
+        from core.integrations import connect_integration
+        result = connect_integration(parts[1].strip().lower())
+        await cl.Message(content=result).send()
+        return
+
+    if user_text.lower().startswith("/disconnect"):
+        parts = user_text.split(maxsplit=1)
+        if len(parts) < 2:
+            await cl.Message(content="استخدم: `/disconnect <اسم_الخدمة>`").send()
+            return
+        from core.integrations import disconnect_integration
+        result = disconnect_integration(parts[1].strip().lower())
+        await cl.Message(content=result).send()
+        return
+
+    if user_text.lower().startswith("/add-integration"):
+        parts = user_text.split(maxsplit=3)
+        if len(parts) < 3:
+            await cl.Message(
+                content="استخدم: `/add-integration <اسم> <رابط> [وصف]`\nمثال: `/add-integration myapi https://api.example.com واجهة برمجة مخصصة`"
+            ).send()
+            return
+        from core.integrations import add_custom_integration
+        name = parts[1].strip()
+        url = parts[2].strip()
+        desc = parts[3].strip() if len(parts) > 3 else ""
+        result = add_custom_integration(name, url, desc)
+        await cl.Message(content=result).send()
+        return
+
+    # ── Plugins command ────────────────────────────────────────────────────────
+    if user_text.lower().startswith("/plugins"):
+        parts = user_text.split(maxsplit=1)
+        arg = parts[1].strip().lower() if len(parts) == 2 else ""
+        if arg == "reload":
+            from core.plugins import reload_plugins
+            reload_plugins()
+            await cl.Message(content="🔄 تم إعادة تحميل الإضافات بنجاح.").send()
+        else:
+            from core.plugins import list_plugins_display
+            await cl.Message(content=list_plugins_display()).send()
+        return
+
+    # ── Settings command ───────────────────────────────────────────────────────
+    if user_text.lower().startswith("/settings") or user_text.lower().startswith("/إعدادات"):
+        parts = user_text.split(maxsplit=2)
+        if len(parts) >= 3 and parts[1].lower() == "set":
+            kv = parts[2].split(maxsplit=1)
+            if len(kv) == 2:
+                setting_key, setting_val = kv[0].strip(), kv[1].strip()
+                _ALLOWED_SETTINGS = {
+                    "MAX_ITERATIONS", "MAX_HISTORY", "PS_TIMEOUT",
+                    "OLLAMA_AGENT_MODEL", "OLLAMA_SUMMARIZER_MODEL",
+                    "OLLAMA_BASE_URL",
+                }
+                if setting_key.upper() in _ALLOWED_SETTINGS:
+                    os.environ[setting_key.upper()] = setting_val
+                    await cl.Message(
+                        content=f"✅ تم تحديث `{setting_key.upper()}` = `{setting_val}`\n\n⚠️ بعض الإعدادات تحتاج إعادة تشغيل لتأخذ مفعولها."
+                    ).send()
+                else:
+                    await cl.Message(
+                        content=f"❌ الإعداد `{setting_key}` غير مسموح بتغييره من هنا.\n\nالإعدادات المسموحة: {', '.join(f'`{s}`' for s in sorted(_ALLOWED_SETTINGS))}"
+                    ).send()
+            else:
+                await cl.Message(content="استخدم: `/settings set <مفتاح> <قيمة>`").send()
+        else:
+            current_provider = cl.user_session.get("current_provider", _PROVIDER)
+            provider_info = _PROVIDERS.get(current_provider, {})
+            settings_lines = [
+                "# ⚙️ الإعدادات الحالية\n",
+                f"**المزود:** {provider_info.get('icon', '')} {provider_info.get('label', current_provider)}",
+                f"**النموذج:** {os.getenv(provider_info.get('model_var', ''), provider_info.get('default_model', 'N/A'))}",
+                f"**الحد الأقصى للتكرارات:** {os.getenv('MAX_ITERATIONS', '50')}",
+                f"**حد السجل:** {os.getenv('MAX_HISTORY', '30')}",
+                f"**مهلة التنفيذ:** {os.getenv('PS_TIMEOUT', '120')} ثانية",
+                f"**الصوت:** {'مفعّل ✅' if cl.user_session.get('voice_mode') else 'معطّل ❌'}",
+                f"**صوت TTS:** {cl.user_session.get('voice_name', 'salma')}",
+                "",
+                "---",
+                "**لتغيير إعداد:** `/settings set <مفتاح> <قيمة>`",
+                "مثال: `/settings set MAX_ITERATIONS 100`",
+                "",
+                "**الإعدادات القابلة للتغيير:**",
+                "`MAX_ITERATIONS` · `MAX_HISTORY` · `PS_TIMEOUT`",
+                "`OLLAMA_AGENT_MODEL` · `OLLAMA_SUMMARIZER_MODEL` · `OLLAMA_BASE_URL`",
+            ]
+            await cl.Message(content="\n".join(settings_lines)).send()
+        return
+
+    # ── Tasks command ──────────────────────────────────────────────────────────
+    if user_text.lower().startswith("/tasks") or user_text.lower().startswith("/مهام"):
+        parts = user_text.split(maxsplit=1)
+        arg = parts[1].strip().lower() if len(parts) == 2 else ""
+        if arg == "clear":
+            from core.task_history import clear_tasks
+            count = clear_tasks()
+            await cl.Message(content=f"🗑️ تم مسح {count} مهمة من السجل.").send()
+        else:
+            from core.task_history import format_tasks_display
+            await cl.Message(content=format_tasks_display()).send()
+        return
+
+    # ── Export command ──────────────────────────────────────────────────────────
+    if user_text.lower().startswith("/export") or user_text.lower().startswith("/تصدير"):
+        try:
+            state = await GRAPH.aget_state(config)
+            messages_list = state.values.get("messages", []) if state else []
+            if not messages_list:
+                await cl.Message(content="📭 لا توجد رسائل لتصديرها في هذه المحادثة.").send()
+                return
+
+            import json as _json_export
+            import datetime as _dt
+
+            export_data = {
+                "agent": "HAYO AI AGENT",
+                "thread_id": thread_id,
+                "exported_at": _dt.datetime.now().isoformat(),
+                "provider": cl.user_session.get("current_provider", _PROVIDER),
+                "message_count": len(messages_list),
+                "messages": [],
+            }
+            for msg in messages_list:
+                role = getattr(msg, "type", "unknown")
+                content = getattr(msg, "content", "")
+                if isinstance(content, list):
+                    content = " ".join(
+                        p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"
+                    )
+                export_data["messages"].append({
+                    "role": role,
+                    "content": content[:5000],
+                })
+
+            export_dir = Path.home() / "Desktop"
+            if not export_dir.exists():
+                export_dir = Path.home()
+            filename = f"hayo_chat_{thread_id[:8]}_{_dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            export_path = export_dir / filename
+            with open(export_path, "w", encoding="utf-8") as f:
+                _json_export.dump(export_data, f, ensure_ascii=False, indent=2)
+
+            await cl.Message(
+                content=f"📤 **تم تصدير المحادثة بنجاح!**\n\n📄 الملف: `{export_path}`\n💬 عدد الرسائل: {len(messages_list)}"
+            ).send()
+        except Exception as exc:
+            await cl.Message(content=f"❌ خطأ في التصدير: {exc}").send()
+        return
+
     # ── Screenshot command ────────────────────────────────────────────────────
     if user_text.lower() in ("/screenshot", "/لقطة", "لقطة شاشة", "screenshot"):
         await cl.Message(content="📸 جارٍ أخذ لقطة شاشة…").send()
@@ -929,10 +1097,35 @@ async def on_message(message: cl.Message) -> None:
     else:
         msg_content = full_text
 
-    # ── Initial graph run ─────────────────────────────────────────────────────
+    # ── Initial graph run (with task tracking + desktop notifications) ────────
+    import time as _time
+    from core.task_history import start_task, finish_task
+
+    _task_start = _time.time()
+    _task_id = start_task(
+        thread_id=thread_id,
+        description=user_text[:200],
+        provider=cl.user_session.get("current_provider", _PROVIDER),
+    )
+
     inputs = {"messages": [HumanMessage(content=msg_content)]}
     await _run_graph(inputs, config)
     await _handle_hitl_loop(config)
+
+    # Finish task tracking
+    _task_elapsed = _time.time() - _task_start
+    finish_task(_task_id, status="completed", steps_done=1)
+
+    # Desktop notification for long-running tasks (>30 seconds)
+    if _task_elapsed > 30:
+        try:
+            import subprocess
+            subprocess.Popen(
+                ["notify-send", "HAYO AI Agent", f"✅ تم إنجاز المهمة ({_task_elapsed:.0f} ثانية)"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass
 
     # ── Post-run error summary + update conversation store ────────────────────
     try:
