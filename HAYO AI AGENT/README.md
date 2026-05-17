@@ -16,6 +16,8 @@
 | 🔧 **الإصلاح** | إصلاح مشاكل النظام، التسجيل، الخدمات |
 | 🎵 **التحميل** | YouTube/أي موقع → MP3/MP4 عبر yt-dlp |
 | 🔍 **Git** | عمليات على المستودعات المحلية |
+| 🔌 **التكاملات** | GitHub, Google Drive, Telegram, Slack, Notion, Trello, Discord, Webhook |
+| 🧩 **الإضافات** | نظام إضافات مرن — أنشئ أدواتك الخاصة |
 
 ## النماذج المدعومة
 
@@ -52,6 +54,55 @@ Ollama يشغّل نماذج الذكاء الاصطناعي محلياً على
 | `gemma2` | 9B | Google Gemma 2 |
 | `qwen2.5` | 7B | Alibaba Qwen |
 | `codellama` | 7B | متخصص بالبرمجة |
+
+## مركز التكاملات 🔌
+
+اربط الوكيل بخدمات خارجية مباشرة من الواجهة:
+
+| الخدمة | الأيقونة | الأوامر |
+|--------|---------|----------|
+| **GitHub** | 🐙 | `/connect github` — ربط المستودعات |
+| **Google Drive** | 📁 | `/connect gdrive` — ربط الملفات السحابية |
+| **Telegram** | ✈️ | `/connect telegram` — ربط بوت تلغرام |
+| **Slack** | 💬 | `/connect slack` — ربط قناة سلاك |
+| **Notion** | 📝 | `/connect notion` — ربط قاعدة بيانات نوشن |
+| **Trello** | 📋 | `/connect trello` — ربط لوحة تريلو |
+| **Discord** | 🎮 | `/connect discord` — ربط خادم ديسكورد |
+| **Webhook** | 🔗 | `/connect webhook` — ربط واجهة برمجة مخصصة |
+
+### إضافة تكامل مخصص
+
+```
+/add-integration myapi https://api.example.com واجهة برمجة مخصصة
+```
+
+يمكنك ربط أي موقع أو تطبيق يدعم واجهة برمجة (API) أو Webhook.
+
+## نظام الإضافات 🧩
+
+أنشئ أدواتك الخاصة وأضفها للوكيل بسهولة:
+
+1. أنشئ ملف `.py` في مجلد `plugins/`
+2. عرّف الأدوات باستخدام `@tool`
+3. صدّرها في قائمة `TOOLS`
+
+```python
+from langchain_core.tools import tool
+
+PLUGIN_NAME = "My Plugin"
+PLUGIN_DESCRIPTION = "وصف الإضافة"
+
+@tool
+def my_tool(query: str) -> str:
+    """وصف الأداة."""
+    return "النتيجة"
+
+TOOLS = [my_tool]
+```
+
+الأوامر:
+- `/plugins` — عرض الإضافات المحملة
+- `/plugins reload` — إعادة تحميل الإضافات
 
 ## المعمارية
 
@@ -131,6 +182,17 @@ chainlit run app.py --port 8000
 | `/model openai` | تغيير النموذج إلى OpenAI ChatGPT |
 | `/model deepseek` | تغيير النموذج إلى DeepSeek |
 | `/model ollama` | تغيير النموذج إلى Ollama (مجاني محلي) |
+| `/integrations` | عرض مركز التكاملات |
+| `/connect <خدمة>` | ربط خدمة (github, gdrive, telegram...) |
+| `/disconnect <خدمة>` | فصل خدمة |
+| `/add-integration <اسم> <رابط>` | إضافة تكامل مخصص |
+| `/plugins` | عرض الإضافات المحملة |
+| `/plugins reload` | إعادة تحميل الإضافات |
+| `/settings` | عرض الإعدادات الحالية |
+| `/settings set <مفتاح> <قيمة>` | تغيير إعداد |
+| `/tasks` | عرض سجل المهام المنفذة |
+| `/tasks clear` | مسح سجل المهام |
+| `/export` | تصدير المحادثة الحالية كملف JSON |
 | `/screenshot` أو `لقطة شاشة` | أخذ لقطة شاشة لسطح المكتب |
 | `أكمل` أو `continue` | استئناف المهمة السابقة |
 
@@ -164,7 +226,13 @@ HAYO AI AGENT/
 │
 ├── core/
 │   ├── state.py             # AgentState TypedDict
-│   └── safety.py            # فحص الأوامر المدمرة
+│   ├── safety.py            # فحص الأوامر المدمرة
+│   ├── integrations.py      # 🔌 مركز التكاملات
+│   ├── plugins.py           # 🧩 نظام الإضافات
+│   └── task_history.py      # 📋 سجل المهام
+│
+├── plugins/                 # 🧩 مجلد الإضافات المخصصة
+│   └── example_plugin.py    # إضافة مثال توضيحي
 │
 └── tools/
     ├── registry.py          # سجل موحد لجميع الأدوات
@@ -176,6 +244,8 @@ HAYO AI AGENT/
     ├── network_tools.py     # شبكة, DNS, Wi-Fi, منافذ
     ├── audio_tools.py       # صوت, إشعارات, قراءة نص
     ├── web_tools.py         # بحث ويب + تحميل (yt-dlp)
+    ├── github_tools.py      # 🐙 أدوات GitHub
+    ├── gdrive_tools.py      # 📁 أدوات Google Drive
     └── desktop_control.py   # توافق مع الإصدار السابق
 ```
 
@@ -188,3 +258,4 @@ HAYO AI AGENT/
 | `ModuleNotFoundError` | `pip install -r requirements.txt` |
 | الوكيل يدور بلا توقف | المشروع به حد `MAX_ITERATIONS=50` يُجبره على التوقف |
 | المتصفح يفتح بدون كوكيز | أول مرة يفتح profile جديد. سجّل دخول ستحفظه `.browser_profile/` تلقائياً |
+| Ollama لا يعمل | تأكد أن Ollama يعمل (`ollama serve`) وأنك حمّلت نموذجاً (`ollama pull llama3.1`) |
