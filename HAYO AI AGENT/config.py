@@ -47,11 +47,11 @@ def _get_int(name: str, default: int) -> int:
 
 
 # ── Provider selection ──────────────────────────────────────────────────────
-ProviderName = Literal["anthropic", "google", "openai", "deepseek", "groq"]
+ProviderName = Literal["anthropic", "google", "openai", "deepseek", "groq", "ollama"]
 MODEL_PROVIDER: ProviderName = _get("MODEL_PROVIDER", "google").lower()  # type: ignore
-if MODEL_PROVIDER not in ("anthropic", "google", "openai", "deepseek", "groq"):
+if MODEL_PROVIDER not in ("anthropic", "google", "openai", "deepseek", "groq", "ollama"):
     raise ValueError(
-        f"MODEL_PROVIDER must be 'anthropic', 'google', 'openai', 'deepseek', or 'groq', got '{MODEL_PROVIDER}'"
+        f"MODEL_PROVIDER must be 'anthropic', 'google', 'openai', 'deepseek', 'groq', or 'ollama', got '{MODEL_PROVIDER}'"
     )
 
 # ── Anthropic ────────────────────────────────────────────────────────────────
@@ -81,6 +81,11 @@ DEEPSEEK_BASE_URL: str = _get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 GROQ_API_KEY: str = _get("GROQ_API_KEY")
 GROQ_AGENT_MODEL: str = _get("GROQ_AGENT_MODEL", "llama-3.3-70b-versatile")
 GROQ_SUMMARIZER_MODEL: str = _get("GROQ_SUMMARIZER_MODEL", "llama-3.1-8b-instant")
+
+# ── Ollama (local, free) ─────────────────────────────────────────────────────
+OLLAMA_BASE_URL: str = _get("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_AGENT_MODEL: str = _get("OLLAMA_AGENT_MODEL", "llama3.1")
+OLLAMA_SUMMARIZER_MODEL: str = _get("OLLAMA_SUMMARIZER_MODEL", "llama3.1")
 
 # ── Agent behaviour ─────────────────────────────────────────────────────────
 MAX_ITERATIONS: int = min(_get_int("MAX_ITERATIONS", 50), 500)
@@ -147,11 +152,23 @@ AVAILABLE_PROVIDERS: dict[str, dict] = {
         "key_var": "GROQ_API_KEY",
         "models": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"],
     },
+    "ollama": {
+        "label": "Ollama (محلي مجاني)",
+        "icon": "🦙",
+        "key_var": "",
+        "models": ["llama3.1", "llama3.2", "mistral", "gemma2", "qwen2.5", "phi3", "codellama"],
+    },
 }
 
 
 def active_provider_key() -> str:
-    """Return the API key for the currently selected provider."""
+    """Return the API key for the currently selected provider.
+    
+    Ollama runs locally and does not need an API key, so it always returns
+    a non-empty sentinel to pass the 'key present' check.
+    """
+    if MODEL_PROVIDER == "ollama":
+        return "ollama-local"
     key_map = {
         "anthropic": ANTHROPIC_API_KEY,
         "google": GOOGLE_API_KEY,
@@ -163,7 +180,12 @@ def active_provider_key() -> str:
 
 
 def assert_keys_present() -> None:
-    """Fail fast at startup if the active provider has no key."""
+    """Fail fast at startup if the active provider has no key.
+    
+    Ollama is exempt — it runs locally with no API key.
+    """
+    if MODEL_PROVIDER == "ollama":
+        return
     if not active_provider_key():
         key_var_map = {
             "anthropic": "ANTHROPIC_API_KEY",

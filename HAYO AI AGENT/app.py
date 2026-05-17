@@ -71,6 +71,12 @@ _PROVIDERS = {
         "model_var": "GROQ_AGENT_MODEL",
         "default_model": "llama-3.3-70b-versatile",
     },
+    "ollama": {
+        "label": "Ollama (محلي مجاني)",
+        "icon": "🦙",
+        "model_var": "OLLAMA_AGENT_MODEL",
+        "default_model": "llama3.1",
+    },
 }
 
 
@@ -478,9 +484,14 @@ async def on_chat_start() -> None:
             "openai": "OPENAI_API_KEY",
             "deepseek": "DEEPSEEK_API_KEY",
             "groq": "GROQ_API_KEY",
+            "ollama": "",
         }.get(key, "")
-        has_key = bool(os.getenv(api_key_var, "").strip())
-        status = "✅" if has_key else "❌ (مفتاح API غير موجود)"
+        if key == "ollama":
+            has_key = True
+            status = "✅ (مجاني — يعمل محلياً)"
+        else:
+            has_key = bool(os.getenv(api_key_var, "").strip())
+            status = "✅" if has_key else "❌ (مفتاح API غير موجود)"
         available_models.append(f"  {info['icon']} **{info['label']}** — {status}")
 
     models_display = "\n".join(available_models)
@@ -532,7 +543,7 @@ async def on_chat_start() -> None:
             "---\n\n"
             "### النماذج المتاحة:\n"
             f"{models_display}\n\n"
-            "💡 لتغيير النموذج: `/model google` | `/model anthropic` | `/model deepseek` | `/model groq`\n\n"
+            "💡 لتغيير النموذج: `/model google` | `/model anthropic` | `/model deepseek` | `/model groq` | `/model ollama`\n\n"
             "---\n\n"
             "**أخبرني بما تريد — سأتذكر كل شيء قلته في هذه المحادثة.**"
         )
@@ -675,8 +686,9 @@ async def on_message(message: cl.Message) -> None:
                     "openai": "OPENAI_API_KEY",
                     "deepseek": "DEEPSEEK_API_KEY",
                     "groq": "GROQ_API_KEY",
+                    "ollama": "",
                 }
-                api_key = os.getenv(key_vars.get(new_provider, ""), "").strip()
+                api_key = "ollama-local" if new_provider == "ollama" else os.getenv(key_vars.get(new_provider, ""), "").strip()
                 if not api_key:
                     await cl.Message(
                         content=(
@@ -720,7 +732,7 @@ async def on_message(message: cl.Message) -> None:
             await cl.Message(
                 content=(
                     f"النموذج الحالي: {_get_model_display(current)}\n\n"
-                    "للتغيير: `/model google` | `/model anthropic` | `/model openai` | `/model deepseek` | `/model groq`"
+                    "للتغيير: `/model google` | `/model anthropic` | `/model openai` | `/model deepseek` | `/model groq` | `/model ollama`"
                 )
             ).send()
         return

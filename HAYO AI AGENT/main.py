@@ -36,6 +36,8 @@ console = Console()
 
 
 def assert_keys_present() -> None:
+    if MODEL_PROVIDER == "ollama":
+        return
     if MODEL_PROVIDER == "anthropic" and not os.getenv("ANTHROPIC_API_KEY"):
         raise RuntimeError(
             "MODEL_PROVIDER='anthropic' but ANTHROPIC_API_KEY is empty in .env"
