@@ -12,13 +12,19 @@ description: Test the HAYO AI Agent Chainlit app end-to-end. Use when verifying 
    cd "HAYO AI AGENT"
    ```
 
-2. Create and activate the virtual environment:
+2. Create and aCreate and activate the virtual environment:
    ```bash
+   python3 -m venv venv
    python3 -m venv venv
    source venv/bin/activate
    ```
 
 3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
@@ -29,7 +35,7 @@ description: Test the HAYO AI Agent Chainlit app end-to-end. Use when verifying 
    ```
    The `--headless` flag prevents auto-opening a browser.
 
-5. Open browser to `http://localhost:8000`
+55. Open browser to `http://localhost:8000`
 
 ## Devin Secrets Needed
 
@@ -49,6 +55,15 @@ Chainlit's textarea does not accept direct `type` actions for Arabic text. Use c
 echo -n "مرحبا" | xclip -selection clipboard
 ```
 Then click the textarea and press `ctrl+v`. This properly triggers React state updates and enables the send button.
+All keys should be in `HAYO AI AGENT/.env` file.
+
+## Arabic Text Input
+
+Chainlit's textarea does not accept direct `type` actions for Arabic text. Use clipboard paste:
+```bash
+echo -n "مرحبا" | xclip -selection clipboard
+```
+Then click the textarea and press `ctrl+v`. This properly triggers React state updates and enables the send button.
 
 ## Key Test Flows
 
@@ -58,12 +73,21 @@ Then click the textarea and press `ctrl+v`. This properly triggers React state u
 - Verify capabilities section lists all tool categories
 - Check that the sidebar panel is visible (chat history area)
 
-### 2. Agent Chat Pipeline — Deduplication Check
+### 2. Agent Chat Pipeline — Deduplication Check — Deduplication Check
 - Send a simple Arabic message like "مرحبا"
 - Agent should respond within 30 seconds
 - **Critical**: Response text must appear EXACTLY ONCE in the chat bubble
-- Pipeline stages should appear: "يفكر... | Thinking..." and/or "يراجع... | Reviewing..."
+- **Critical**: Response text must appear EXACTLY ONCE in the chat bubble
+- Pipeline stages should appear: "يفكر... | Thinking..." and/or/or "يراجع... | Reviewing..."
 - Response should be in Arabic
+- No internal markers should be visible: `CONVERSATIONAL_ONLY`, `NEW TASK BOUNDARY`, `TASK_COMPLETE`, separator lines (`───`, `━━━`)
+- Use DOM verification to confirm:
+  ```javascript
+  // In browser console
+  const allText = document.body.innerText;
+  const markers = ['CONVERSATIONAL_ONLY', 'TASK_COMPLETE', 'NEW TASK BOUNDARY'];
+  markers.forEach(m => { if (allText.includes(m)) console.log('MARKER FOUND:', m); });
+  ```
 - No internal markers should be visible: `CONVERSATIONAL_ONLY`, `NEW TASK BOUNDARY`, `TASK_COMPLETE`, separator lines (`───`, `━━━`)
 - Use DOM verification to confirm:
   ```javascript
@@ -111,7 +135,13 @@ Then click the textarea and press `ctrl+v`. This properly triggers React state u
 ## Known Issues & Workarounds
 
 ### Streaming Deduplication (Fixed in PR #16)
-`stream_mode="messages"` in LangGraph emits both AIMessageChunk (streaming tokens) AND AIMessage (state update) for every LLM call. The fix in `_run_graph()` tracks which nodes streamed chunks and skips their duplicate AIMessage. Additionally, internal markers like `CONVERSATIONAL_ONLY` can arrive as individual tokens ("CON", "V", "ERS"...) — the line-buffer approach accumulates text and filters at newline boundaries.
+`stream_mode="messages"` in LangGraph emits both AIMessageChunk (streaming tokens) AND AIMessage (state update) for every LLM call. The fix in `_run_graph()` tracks which nodes streamed chunks and skips their duplicate AIMessage. Additionally, internal marStreaming Deduplication (Fixed in PR #16)
+`stream_mode="messages"` in LangGraph emits both AIMessageChunk (streaming tokens) AND AIMessage (state update) for every LLM call. The fix in `_run_graph()` tracks which nodes streamed chunks and skips their duplicate AIMessage. Additionally, internal markerrs like like `CONVERSATIONAL_ONLY` can arrive as individual tokens ("CON", "V", "ERS"...) — the line-buff can arrive as individual tokens ("CON", "V", "ERS"...) — the line-buffer apapproach accumulates text and filters at newline boundaries.
+
+If the repetition bug reappears, check:
+1. `_nodes_with_chunks` set in `_run_graph()` — is it tracking nodes correctly?
+2. `_line_buf` — is text being accumulated and flushed at newlines?
+3. `isinstance` checks — AIMessageChunk must be checked BEFORE AIMessage (since AIMessageChunk inherits from AIMessage)ach accumulates text and filters at newline boundaries.
 
 If the repetition bug reappears, check:
 1. `_nodes_with_chunks` set in `_run_graph()` — is it tracking nodes correctly?
@@ -142,5 +172,7 @@ The LangGraph pipeline (Planner → Worker → Reviewer) takes 15-30 seconds per
 - **Tools**: `tools/registry.py` — ALL_TOOLS list with 109 tools
 - **Tool modules**: `tools/browser_tools.py`, `tools/github_tools.py`, `tools/gdrive_tools.py`, etc.
 - **Streaming**: `app.py` `_run_graph()` function handles streaming output to Chainlit UI
+- **Deduplication**: `_nodes_with_chunks` set + `_line_buf` line buffer in `_run_graph()`
+- **Internal markers**: `_INTERNAL_MARKERS` tuple + `_filter_internal_tokens()` in `app.py`
 - **Deduplication**: `_nodes_with_chunks` set + `_line_buf` line buffer in `_run_graph()`
 - **Internal markers**: `_INTERNAL_MARKERS` tuple + `_filter_internal_tokens()` in `app.py`
