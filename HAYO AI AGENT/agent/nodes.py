@@ -184,10 +184,30 @@ def _build_llm(role: Literal["main", "summarizer"], provider: str | None = None)
                 max_tokens=2_048,
             )
 
+    elif prov == "ollama":
+        from langchain_ollama import ChatOllama
+
+        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        if role == "main":
+            model_name = os.getenv("OLLAMA_AGENT_MODEL", "llama3.1")
+            return ChatOllama(
+                model=model_name,
+                base_url=base_url,
+                temperature=0.0,
+            )
+        else:
+            model_name = os.getenv("OLLAMA_SUMMARIZER_MODEL", "llama3.1")
+            return ChatOllama(
+                model=model_name,
+                base_url=base_url,
+                temperature=0.0,
+                num_predict=2_048,
+            )
+
     else:
         raise ValueError(
             f"Unknown MODEL_PROVIDER='{prov}'. "
-            "Set MODEL_PROVIDER to 'google', 'anthropic', 'openai', 'deepseek', or 'groq'."
+            "Set MODEL_PROVIDER to 'google', 'anthropic', 'openai', 'deepseek', 'groq', or 'ollama'."
         )
 
 

@@ -25,8 +25,33 @@
 | 🟠 **Claude** | Anthropic | [console.anthropic.com](https://console.anthropic.com/) |
 | 🟢 **ChatGPT** | OpenAI | [platform.openai.com](https://platform.openai.com/api-keys) |
 | 🔵 **DeepSeek** | DeepSeek | [platform.deepseek.com](https://platform.deepseek.com/api_keys) |
+| 🦙 **Ollama** | محلي مجاني | [ollama.com](https://ollama.com/download) |
 
-يمكنك تغيير النموذج من الواجهة مباشرة بكتابة `/model google` أو `/model anthropic` أو `/model openai` أو `/model deepseek`.
+يمكنك تغيير النموذج من الواجهة مباشرة بكتابة `/model google` أو `/model anthropic` أو `/model openai` أو `/model deepseek` أو `/model ollama`.
+
+### استخدام Ollama (مجاني بالكامل!)
+
+Ollama يشغّل نماذج الذكاء الاصطناعي محلياً على جهازك بدون الحاجة لمفتاح API أو دفع أي مال:
+
+1. **ثبّت Ollama**: حمّله من [ollama.com/download](https://ollama.com/download)
+2. **حمّل نموذجاً**: افتح Terminal واكتب:
+   ```bash
+   ollama pull llama3.1
+   ```
+3. **عدّل ملف `.env`**: غيّر `MODEL_PROVIDER=google` إلى:
+   ```
+   MODEL_PROVIDER=ollama
+   ```
+4. **شغّل الوكيل**: انقر مرتين على `START.bat`
+
+| النموذج | الحجم | الوصف |
+|---------|------|-------|
+| `llama3.1` | 8B | متوازن وموصى به |
+| `llama3.2` | 3B | أخف وأسرع |
+| `mistral` | 7B | Mistral AI |
+| `gemma2` | 9B | Google Gemma 2 |
+| `qwen2.5` | 7B | Alibaba Qwen |
+| `codellama` | 7B | متخصص بالبرمجة |
 
 ## المعمارية
 
@@ -43,7 +68,7 @@
 - **LangGraph** كبنية أساسية للحالة والتوجيه
 - **SQLite Checkpointer** لحفظ المحادثات بين تشغيلات الخادم
 - **Human-in-the-Loop** للأوامر المدمرة و CAPTCHA — يتوقف الوكيل ويسأل
-- **4 مزودين** — Google Gemini, Claude, ChatGPT, DeepSeek
+- **6 مزودين** — Google Gemini, Claude, ChatGPT, DeepSeek, Groq, Ollama (مجاني)
 
 ## التثبيت السريع
 
@@ -105,6 +130,7 @@ chainlit run app.py --port 8000
 | `/model anthropic` | تغيير النموذج إلى Anthropic Claude |
 | `/model openai` | تغيير النموذج إلى OpenAI ChatGPT |
 | `/model deepseek` | تغيير النموذج إلى DeepSeek |
+| `/model ollama` | تغيير النموذج إلى Ollama (مجاني محلي) |
 | `/screenshot` أو `لقطة شاشة` | أخذ لقطة شاشة لسطح المكتب |
 | `أكمل` أو `continue` | استئناف المهمة السابقة |
 
@@ -157,7 +183,7 @@ HAYO AI AGENT/
 
 | مشكلة | الحل |
 |-------|------|
-| `GOOGLE_API_KEY is empty` | عدّل `.env` وضع المفتاح |
+| `GOOGLE_API_KEY is empty` | عدّل `.env` وضع المفتاح أو استخدم `MODEL_PROVIDER=ollama` للعمل بدون مفتاح |
 | `playwright not installed` | `python -m playwright install chromium` |
 | `ModuleNotFoundError` | `pip install -r requirements.txt` |
 | الوكيل يدور بلا توقف | المشروع به حد `MAX_ITERATIONS=50` يُجبره على التوقف |
